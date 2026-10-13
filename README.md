@@ -1,3 +1,5 @@
+![Bobcat](bobcat.png)
+
 # Bobcat
 
 Version: 1.3.9
@@ -142,3 +144,7 @@ https://ko-fi.com/richardatlateralblast
 ## Third-party
 
 `gui/ui/vendor/` contains xterm.js 5.5.0 and its fit addon (MIT licence, see `gui/ui/vendor/xterm-LICENSE`).
+
+Bobcat image:
+
+<a href="https://www.flaticon.com/free-icons/pixie-bob" title="pixie bob icons">Pixie bob icons created by Magnific - Flaticon</a>
