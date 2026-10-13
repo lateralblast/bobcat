@@ -37,7 +37,8 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] `--console vnc`: keep the learned character table between runs, per iDRAC (1.0.6)
 - [x] GUI: HTML5 console, now embedded in the main window (1.1.7)
 - [ ] GUI: HTML5 virtual media (the viewer passes vmPriv=false) and a `--console html5` for the CLI
-- [ ] GUI: HTML5 embedded view on macOS/Windows (only the Linux layout is implemented; other platforms use the separate window)
+- [x] GUI: HTML5 embedded view on macOS (1.3.0; frame-based layout between the toolbar and status bar; needs more testing)
+- [ ] GUI: HTML5 embedded view on Windows (other platforms still use the separate window)
 - [x] CLI: iDRAC password in the OS keychain (`--save` / `--forget`) (1.2.1)
 - [x] GUI: use the keychain for iDRAC passwords, Remember checkbox (1.2.2)
 - [ ] GUI: hide or avoid the brief certificate window of the HTML5 viewer

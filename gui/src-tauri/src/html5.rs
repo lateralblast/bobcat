@@ -399,6 +399,9 @@ fn keep_alive(s: WebSession) {
 static CLOSING: AtomicBool = AtomicBool::new(false);
 /// Height (CSS px) the main page needs for its toolbar and status bar; reported by the front end.
 static TOP_HEIGHT: AtomicI32 = AtomicI32::new(0);
+/// Height of the toolbar alone (the rest of TOP_HEIGHT is the status bar, at the bottom of the page).
+/// Only macOS uses it: there the console view sits between the toolbar and the status bar.
+static BAR_HEIGHT: AtomicI32 = AtomicI32::new(0);
 
 fn debug_on() -> bool {
     std::env::var("BOBCAT_DEBUG").is_ok()
@@ -460,6 +463,9 @@ fn new_window_handler(app: AppHandle, ip: String) -> impl Fn(Url, NewWindowFeatu
         let n = COUNT.fetch_add(1, Ordering::SeqCst);
         match WebviewWindowBuilder::new(&app, format!("html5popup{n}"), WebviewUrl::External("about:blank".parse().unwrap()))
             .window_features(features)
+            // macOS: the window only exists to answer the viewer's ping, so keep it out of sight
+            // (BOBCAT_SHOW_POPUP=1 shows it again if the console fails to connect)
+            .visible(!cfg!(target_os = "macos") || std::env::var("BOBCAT_SHOW_POPUP").is_ok())
             .title(format!("iDRAC console - {ip} (certificate)"))
             .on_page_load(|w, payload| {
                 if debug_on() {
@@ -582,10 +588,80 @@ fn restore_main_layout(app: &AppHandle) {
     });
 }
 
-#[cfg(not(target_os = "linux"))]
-fn apply_embedded_layout(_app: &AppHandle) {}
+/// On macOS a child web view is positioned by its frame, so the main page keeps the whole window and
+/// the console view is placed over its empty middle: below the toolbar, above the status bar.
+/// Called again whenever the window or the toolbar changes size.
+#[cfg(target_os = "macos")]
+fn apply_embedded_layout(app: &AppHandle) {
+    let Some(console) = app.get_webview(LABEL) else { return };
+    if console.window().label() != "main" {
+        return; // the console is in a window of its own
+    }
+    let top = BAR_HEIGHT.load(Ordering::SeqCst).max(0) as f64;
+    let status = (TOP_HEIGHT.load(Ordering::SeqCst) - BAR_HEIGHT.load(Ordering::SeqCst)).max(0) as f64;
+    mac_layout::place(&console, top, status);
+}
+
+/// The macOS frame maths, run on the main thread. The window's content view runs under the title
+/// bar (the window and content view frames are the same size), while WebKit lays the main page out
+/// below it, so a child frame measured from the top of the view sits one title-bar height too high
+/// relative to the page. Add that height (the view height minus `contentLayoutRect`) to the top.
+#[cfg(target_os = "macos")]
+mod mac_layout {
+    use objc2::encode::{Encode, Encoding};
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    struct Pt { x: f64, y: f64 }
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    struct Sz { w: f64, h: f64 }
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    struct Rc { o: Pt, s: Sz }
+    unsafe impl Encode for Pt { const ENCODING: Encoding = Encoding::Struct("CGPoint", &[Encoding::Double, Encoding::Double]); }
+    unsafe impl Encode for Sz { const ENCODING: Encoding = Encoding::Struct("CGSize", &[Encoding::Double, Encoding::Double]); }
+    unsafe impl Encode for Rc { const ENCODING: Encoding = Encoding::Struct("CGRect", &[Pt::ENCODING, Sz::ENCODING]); }
+
+    pub fn place(console: &tauri::Webview, top: f64, status: f64) {
+        let _ = console.with_webview(move |pw| unsafe {
+            let wk = pw.inner() as *mut AnyObject;
+            let parent: *mut AnyObject = msg_send![wk, superview];
+            let window: *mut AnyObject = msg_send![wk, window];
+            if parent.is_null() || window.is_null() {
+                return;
+            }
+            let pframe: Rc = msg_send![parent, frame];
+            let layout: Rc = msg_send![window, contentLayoutRect];
+            let title = (pframe.s.h - layout.s.h).max(0.0);
+            let (w, view_h) = (pframe.s.w, pframe.s.h);
+            let height = (view_h - title - top - status).max(100.0);
+            // the parent is not flipped: origin y counts from the bottom of the view
+            let frame = Rc { o: Pt { x: 0.0, y: status }, s: Sz { w, h: height } };
+            let _: () = msg_send![wk, setFrame: frame];
+            if super::debug_on() {
+                eprintln!("[bobcat-gui] layout: view {w}x{view_h}, title bar {title}, toolbar {top}, status bar {status}, console {w}x{height} at bottom {status}");
+            }
+        });
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn restore_main_layout(_app: &AppHandle) {}
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn apply_embedded_layout(_app: &AppHandle) {}
+
+/// Wait until the main thread has run everything queued for this web view so far. with_webview
+/// runs later on the main thread, so without this the certificate check added by pin_webview_tls
+/// would not be in place for the first navigation. Never call it from the main thread.
+fn wait_for_main_thread(webview: &tauri::Webview) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if webview.with_webview(move |_| drop(tx.send(()))).is_ok() {
+        let _ = rx.recv_timeout(Duration::from_secs(5));
+    }
+}
 
 fn set_session_cookie(webview: &tauri::Webview, ip: &str, session: &WebSession) -> Result<(), String> {
     let cookie = session.cookie.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).ok_or("bad cookie")?;
@@ -609,6 +685,11 @@ fn open_embedded(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Str
         .add_child(builder, LogicalPosition::new(0.0, top), LogicalSize::new(w, (h - top).max(100.0)))
         .map_err(|e| e.to_string())?;
     pin_webview_tls(&webview);
+    wait_for_main_thread(&webview);
+    // macOS: Tauri would rescale the view with the window by its own proportions; the layout
+    // is applied explicitly instead (see apply_embedded_layout)
+    #[cfg(target_os = "macos")]
+    let _ = webview.set_auto_resize(false);
     apply_embedded_layout(app);
     set_session_cookie(&webview, ip, &console.session)?;
     webview.navigate(console.url.parse().map_err(|e| format!("{e}"))?).map_err(|e| e.to_string())?;
@@ -626,12 +707,7 @@ fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Strin
         .build()
         .map_err(|e| e.to_string())?;
     pin_webview_tls(win.as_ref());
-    // with_webview runs on the main thread later; wait for it so the certificate check is in
-    // place before the first navigation (otherwise the self-signed certificate is rejected)
-    let (tx, rx) = std::sync::mpsc::channel();
-    if win.as_ref().with_webview(move |_| drop(tx.send(()))).is_ok() {
-        let _ = rx.recv_timeout(Duration::from_secs(5));
-    }
+    wait_for_main_thread(win.as_ref());
     let app_for_close = app.clone();
     win.on_window_event(move |event| {
         // the user closed the window: disconnect the viewer properly first
@@ -664,11 +740,11 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
         crate::keychain::remember(user, ip, pass);
     }
     keep_alive(console.session.clone());
-    // the embedded child view is only laid out on Linux; elsewhere use a window of its own
-    let embedded_result = if cfg!(target_os = "linux") {
+    // the embedded child view is only laid out on Linux and macOS; elsewhere use a window of its own
+    let embedded_result = if cfg!(any(target_os = "linux", target_os = "macos")) {
         open_embedded(app, ip, &console)
     } else {
-        Err("embedding is only implemented on Linux".to_string())
+        Err("embedding is only implemented on Linux and macOS".to_string())
     };
     let embedded = match embedded_result {
         Ok(()) => true,
@@ -793,7 +869,8 @@ pub fn disconnect_html5(app: AppHandle) {
 /// The main page reports how tall its toolbar and status bar are, so the console view can take
 /// the rest of the window.
 #[tauri::command]
-pub fn html5_layout(app: AppHandle, height: i32) {
+pub fn html5_layout(app: AppHandle, height: i32, bar: Option<i32>) {
     TOP_HEIGHT.store(height, Ordering::SeqCst);
+    BAR_HEIGHT.store(bar.unwrap_or(height), Ordering::SeqCst);
     apply_embedded_layout(&app);
 }

@@ -2,6 +2,28 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.3.3] - 2026-10-14
+### Changed
+- GUI on macOS: the small certificate window the HTML5 viewer opens to the console port (it only answers the viewer's ping and closes itself) is now created hidden instead of flashing on screen. Set `BOBCAT_SHOW_POPUP=1` to show it again, for example if the console no longer connects.
+
+## [1.3.2] - 2026-10-14
+### Fixed
+- GUI on macOS: the embedded HTML5 console was drawn about one title-bar height too high and covered the second toolbar row. The window's content view runs under the title bar, WebKit lays the main page out below it, and a child view's frame is measured from the top of the full view. The console's frame is now set directly on the main thread with the title-bar height (view height minus `contentLayoutRect`) added to its top, and Tauri's proportional auto-resize is turned off for the view (the page's resize events re-apply the layout). This replaces the `set_bounds` change in 1.3.1, which did not address the cause (the frame it set was already what was asked for). With `BOBCAT_DEBUG` the layout maths is logged (`layout:`).
+
+## [1.3.1] - 2026-10-14
+### Fixed
+- GUI on macOS: the embedded HTML5 console covered the second toolbar row (Copy, Paste, ...) and did not stay below it when the window was resized. Tauri's `set_size` / `set_position` read the view's bounds back first and wry converts that y assuming an unflipped parent view, so each call moved the console. The layout is now applied with a single `set_bounds` call. With `BOBCAT_DEBUG` the computed layout is logged (`layout:`).
+
+## [1.3.0] - 2026-10-14
+### Added
+- GUI on macOS: the HTML5 console is now embedded in the main window, between the toolbar and the status bar, instead of a separate window. The console view is positioned by frame and re-fitted whenever the window or toolbar changes size (the toolbar height is now reported separately from the status bar). If embedding fails the separate window is still used. The brief certificate window the viewer opens to the console port still appears.
+### Changed
+- GUI: the wait for the certificate check to be installed before the first navigation is shared by the embedded view and the separate window.
+
+## [1.2.9] - 2026-10-14
+### Changed
+- GUI: the OS keychain is now read only while **Remember** is ticked. Before, the saved password was looked up at startup and whenever the IP, user or protocol changed, which made macOS show its keychain prompt even with Remember unticked. Ticking Remember now loads the saved password if there is one; a saved password is no longer filled in automatically at startup. Unticking Remember for a loaded entry still deletes it on connect.
+
 ## [1.2.8] - 2026-10-14
 ### Fixed
 - GUI HTML5: an answer cut short by the iDRAC (connection ended without a TLS close before all the data arrived) was treated as complete, which showed up as a confusing `bad gzip body: incomplete deflate stream`. A body shorter than its `Content-Length`, or a gzip failure after such an early end, now reports that the iDRAC cut the answer short.

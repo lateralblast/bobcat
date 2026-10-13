@@ -25,23 +25,24 @@ invoke('default_user').then((u) => { $('user').value = u; });
 invoke('default_ip').then((ip) => { if (ip) $('ip').value = ip; });
 // The password saved in the keychain for this IP: the iDRAC login (user + IP) for SSH, SOL
 // and HTML5, the VNC password (empty user) for VNC. savedFor remembers whose entry is
-// loaded so unticking Remember can delete it.
+// loaded so unticking Remember can delete it. The keychain is read only while Remember is ticked.
 let savedFor = null;
 async function fillSaved() {
+  // only touch the keychain (which can prompt) while Remember is ticked
+  if (!$('remember').checked) { savedFor = null; return; }
   const who = { user: $('proto').value === 'vnc' ? '' : $('user').value, ip: $('ip').value };
   const pw = await invoke('saved_password', who);
   if (pw && (!$('pass').value || savedFor)) {
     $('pass').value = pw;
-    $('remember').checked = true;
     savedFor = who;
   } else if (!pw) {
     if (savedFor) $('pass').value = ''; // it was the other protocol's saved password
     savedFor = null;
-    $('remember').checked = false;
   }
 }
 $('ip').onchange = $('user').onchange = () => { $('pass').value = ''; fillSaved(); };
 $('pass').oninput = () => { savedFor = null; };
+$('remember').onchange = () => { if ($('remember').checked) fillSaved(); };
 
 invoke('default_protocol').then(async (p) => {
   $('proto').value = p;
@@ -444,7 +445,7 @@ setProto();
 // rest of the window to the console.
 function reportLayout() {
   if ($('proto').value !== 'html5') return;
-  invoke('html5_layout', { height: Math.ceil($('bar').offsetHeight + $('statusbar').offsetHeight) });
+  invoke('html5_layout', { height: Math.ceil($('bar').offsetHeight + $('statusbar').offsetHeight), bar: Math.ceil($('bar').offsetHeight) });
 }
 new ResizeObserver(reportLayout).observe($('bar'));
 
