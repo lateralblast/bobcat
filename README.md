@@ -11,7 +11,7 @@ Tested against an iDRAC8; the settings it changes are named in `CHANGELOG.md` an
 | Program | What it is |
 |---|---|
 | `bobcat-cli` | Command line: enables and disables iDRAC services, opens text consoles in your terminal, and shows the VNC console **as text**. |
-| `bobcat-gui` | Desktop app (Tauri 2): the VNC console as a window, plus SSH and SOL terminals, on-screen keyboard, copy and paste. |
+| `bobcat` | Desktop app (Tauri 2): the VNC console as a window, plus SSH and SOL terminals, on-screen keyboard, copy and paste. |
 
 ## bobcat-cli
 
@@ -52,13 +52,13 @@ character table is saved per iDRAC in `~/.cache/bobcat/glyphs.json` so later run
 starts over). `BOBCAT_ONCE=1` prints the screen once and exits (for scripts).
 
 **Trust.** The iDRAC's SSH host key and TLS certificate are pinned the first time they are seen (trust on first
-use, saved in `~/.config/bobcat/known_certs.json`, shared with `bobcat-gui`) and the connection is refused if they
+use, saved in `~/.config/bobcat/known_certs.json`, shared with `bobcat`) and the connection is refused if they
 change. `--trust-new-hostkey` accepts a changed key or certificate.
 
 **Packages.** `bobcat-cli --check` verifies that `ipmitool`, `tesseract` and the GUI's libraries are installed;
 add `--install` to install missing ones with apt (sudo prompts for its own password) or, on macOS, Homebrew.
 
-## bobcat-gui
+## bobcat
 
 ```
 cd gui/src-tauri
@@ -110,7 +110,7 @@ and password; SSH and SOL show a terminal.
 ## Building installers
 
 ```
-./build.sh --target mac        # dist/bobcat-gui_<version>_<arch>.dmg and dist/bobcat-cli-<version>-mac
+./build.sh --target mac        # dist/bobcat_<version>_<arch>.dmg and dist/bobcat-cli-<version>-mac
 ./build.sh --target mac --arch universal   # or arm64 / x64
 ./build.sh --target linux      # .deb and .AppImage (build on Linux)
 ./build.sh --target windows    # NSIS setup.exe (build on Windows, e.g. Git Bash)
@@ -118,7 +118,8 @@ and password; SSH and SOL show a terminal.
 
 Needs the Rust toolchain and `cargo install tauri-cli --version '^2'` (and `perl` for the bundled OpenSSL). Each target
 must be built on its own platform. The macOS app is not signed or notarized: on first launch right-click it and choose
-Open (or run `xattr -dr com.apple.quarantine /Applications/bobcat-gui.app`). Only the macOS (arm64) build has been
+Open (or run `xattr -dr com.apple.quarantine /Applications/bobcat.app`). The first connection from the built app asks for Local Network access; allow it (System Settings >
+Privacy & Security > Local Network), otherwise connections fail with "No route to host". Only the macOS (arm64) build has been
 tried.
 
 ## Files and variables

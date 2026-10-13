@@ -1,4 +1,4 @@
-// bobcat-gui: the iDRAC HTML5 virtual console in its own window
+// bobcat: the iDRAC HTML5 virtual console in its own window
 // Version: 1.1.9
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 //
@@ -91,7 +91,7 @@ pub(crate) fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String
     }
 
     let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\nAccept-Encoding: gzip\r\nUser-Agent: bobcat-gui\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\nAccept-Encoding: gzip\r\nUser-Agent: bobcat\r\n"
     );
     for (k, v) in extra {
         req.push_str(&format!("{k}: {v}\r\n"));
@@ -297,7 +297,7 @@ fn pin_webview_tls(webview: &tauri::Webview) {
                 wv.load_uri(uri);
                 true
             } else {
-                eprintln!("[bobcat-gui] blocked a certificate for {host} that does not match the pinned one ({fp})");
+                eprintln!("[bobcat] blocked a certificate for {host} that does not match the pinned one ({fp})");
                 false
             }
         });
@@ -322,7 +322,7 @@ fn pin_webview_tls(webview: &tauri::Webview) {
         let _: () = msg_send![prefs, setJavaScriptCanOpenWindowsAutomatically: true];
         let delegate: *mut AnyObject = msg_send![wk, navigationDelegate];
         if debug_on() {
-            eprintln!("[bobcat-gui] macOS web view delegate: {delegate:?}");
+            eprintln!("[bobcat] macOS web view delegate: {delegate:?}");
         }
         if delegate.is_null() {
             return;
@@ -337,7 +337,7 @@ fn pin_webview_tls(webview: &tauri::Webview) {
                 c"v@:@@@?".as_ptr(),
             );
             if !ok.as_bool() {
-                eprintln!("[bobcat-gui] could not add the certificate check to the web view");
+                eprintln!("[bobcat] could not add the certificate check to the web view");
             }
         });
         // WebKit caches which delegate methods exist when the delegate is set, so set it again
@@ -385,7 +385,7 @@ mod mac_tls {
             let method = text(msg_send![space, authenticationMethod]);
             let host = text(msg_send![space, host]);
             if super::debug_on() {
-                eprintln!("[bobcat-gui] challenge: {method} for {host}");
+                eprintln!("[bobcat] challenge: {method} for {host}");
             }
             let trust: SecTrustPtr = msg_send![space, serverTrust];
             if method != "NSURLAuthenticationMethodServerTrust" || trust.0.is_null() {
@@ -401,7 +401,7 @@ mod mac_tls {
                 let cred: *mut AnyObject = msg_send![class, credentialForTrust: trust];
                 completion.call((0, cred));
             } else {
-                eprintln!("[bobcat-gui] blocked a certificate for {host} that does not match the pinned one ({})", fp.unwrap_or_default());
+                eprintln!("[bobcat] blocked a certificate for {host} that does not match the pinned one ({})", fp.unwrap_or_default());
                 completion.call((2, std::ptr::null_mut()));
             }
         }
@@ -480,11 +480,11 @@ fn opener_script(locale: &str) -> String {
 fn new_window_handler(app: AppHandle, ip: String) -> impl Fn(Url, NewWindowFeatures) -> NewWindowResponse<tauri::Wry> + Send + 'static {
     move |url, features| {
         if debug_on() {
-            eprintln!("[bobcat-gui] the console page asked for a new window: {url}");
+            eprintln!("[bobcat] the console page asked for a new window: {url}");
         }
         if url.host_str() != Some(ip.as_str()) {
             if debug_on() {
-                eprintln!("[bobcat-gui] denied (not the iDRAC's address)");
+                eprintln!("[bobcat] denied (not the iDRAC's address)");
             }
             return NewWindowResponse::Deny;
         }
@@ -498,7 +498,7 @@ fn new_window_handler(app: AppHandle, ip: String) -> impl Fn(Url, NewWindowFeatu
             .title(format!("iDRAC console - {ip} (certificate)"))
             .on_page_load(|w, payload| {
                 if debug_on() {
-                    eprintln!("[bobcat-gui] popup {:?}: {}", payload.event(), payload.url());
+                    eprintln!("[bobcat] popup {:?}: {}", payload.event(), payload.url());
                 }
                 // The page answers the viewer's ping and then calls window.close(), which does not
                 // close a window the app created. Once it has had ample time to answer (the viewer
@@ -519,7 +519,7 @@ fn new_window_handler(app: AppHandle, ip: String) -> impl Fn(Url, NewWindowFeatu
             }
             Err(e) => {
                 if debug_on() {
-                    eprintln!("[bobcat-gui] could not create the window: {e}");
+                    eprintln!("[bobcat] could not create the window: {e}");
                 }
                 NewWindowResponse::Deny
             }
@@ -529,7 +529,7 @@ fn new_window_handler(app: AppHandle, ip: String) -> impl Fn(Url, NewWindowFeatu
 
 fn page_log(event: &str, payload: &tauri::webview::PageLoadPayload<'_>) {
     if debug_on() {
-        eprintln!("[bobcat-gui] {event} {:?}: {}", payload.event(), payload.url());
+        eprintln!("[bobcat] {event} {:?}: {}", payload.event(), payload.url());
     }
 }
 
@@ -576,11 +576,11 @@ fn apply_embedded_layout(app: &AppHandle) {
             let vbox = vbox.clone();
             let console_w = console_w.clone();
             gtk::glib::timeout_add_local_once(Duration::from_millis(800), move || {
-                eprintln!("[bobcat-gui] layout: requested top strip height {top}");
+                eprintln!("[bobcat] layout: requested top strip height {top}");
                 for child in vbox.children() {
                     let a = child.allocation();
                     let which = if child == console_w { "console view" } else { "toolbar strip" };
-                    eprintln!("[bobcat-gui] layout: {which} at y={} size {}x{} (in a {}x{} box)", a.y(), a.width(), a.height(), vbox.allocated_width(), vbox.allocated_height());
+                    eprintln!("[bobcat] layout: {which} at y={} size {}x{} (in a {}x{} box)", a.y(), a.width(), a.height(), vbox.allocated_width(), vbox.allocated_height());
                 }
             });
         }
@@ -607,7 +607,7 @@ fn restore_main_layout(app: &AppHandle) {
                 let (w2, vbox2) = (w.clone(), vbox.clone());
                 gtk::glib::timeout_add_local_once(Duration::from_millis(800), move || {
                     let a = w2.allocation();
-                    eprintln!("[bobcat-gui] layout restored: main page {}x{} in a {}x{} box, {} child(ren)", a.width(), a.height(), vbox2.allocated_width(), vbox2.allocated_height(), vbox2.children().len());
+                    eprintln!("[bobcat] layout restored: main page {}x{} in a {}x{} box, {} child(ren)", a.width(), a.height(), vbox2.allocated_width(), vbox2.allocated_height(), vbox2.children().len());
                 });
             }
         } else if let Ok(vbox) = parent.downcast::<gtk::Box>() {
@@ -671,7 +671,7 @@ mod mac_layout {
             let frame = Rc { o: Pt { x: 0.0, y: status }, s: Sz { w, h: height } };
             let _: () = msg_send![wk, setFrame: frame];
             if super::debug_on() {
-                eprintln!("[bobcat-gui] layout: view {w}x{view_h}, title bar {title}, toolbar {top}, status bar {status}, console {w}x{height} at bottom {status}");
+                eprintln!("[bobcat] layout: view {w}x{view_h}, title bar {title}, toolbar {top}, status bar {status}, console {w}x{height} at bottom {status}");
             }
         });
     }
@@ -747,12 +747,12 @@ fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Strin
     });
     let cookie_result = set_session_cookie(win.as_ref(), ip, &console.session);
     if debug_on() {
-        eprintln!("[bobcat-gui] set cookie: {cookie_result:?}");
+        eprintln!("[bobcat] set cookie: {cookie_result:?}");
     }
     cookie_result?;
     let nav_result = win.navigate(console.url.parse().map_err(|e| format!("{e}"))?).map_err(|e| e.to_string());
     if debug_on() {
-        eprintln!("[bobcat-gui] navigate to {}: {nav_result:?}", console.url.split('?').next().unwrap_or(""));
+        eprintln!("[bobcat] navigate to {}: {nav_result:?}", console.url.split('?').next().unwrap_or(""));
     }
     nav_result?;
     Ok(())
@@ -779,7 +779,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
         Ok(()) => true,
         Err(e) => {
             if debug_on() {
-                eprintln!("[bobcat-gui] could not embed the console ({e}); using a separate window");
+                eprintln!("[bobcat] could not embed the console ({e}); using a separate window");
             }
             // clean up a half-made child before falling back
             if let Some(wv) = app.get_webview(LABEL) {
@@ -803,9 +803,9 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
                     match crate::html5_tools::snapshot_png(&app, label, None) {
                         Ok(png) => {
                             let _ = std::fs::write(format!("{dir}/{label}.png"), png);
-                            eprintln!("[bobcat-gui] test: saved {dir}/{label}.png");
+                            eprintln!("[bobcat] test: saved {dir}/{label}.png");
                         }
-                        Err(e) => eprintln!("[bobcat-gui] test: snapshot of {label} failed: {e}"),
+                        Err(e) => eprintln!("[bobcat] test: snapshot of {label} failed: {e}"),
                     }
                 }
             });
@@ -825,7 +825,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
                     "copy" => crate::html5_tools::copy_text(&app),
                     _ => crate::html5_tools::zoom(&app, value.parse().unwrap_or(1.0)).map(|_| format!("zoom {value}")),
                 };
-                eprintln!("[bobcat-gui] test {action}: {r:?}");
+                eprintln!("[bobcat] test {action}: {r:?}");
             });
         }
     }
@@ -836,7 +836,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
             let (secs, js, app) = (secs.parse::<u64>().unwrap_or(30), js.to_string(), app.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(secs));
-                eprintln!("[bobcat-gui] test js: {:?}", crate::html5_tools::run_js_pub(&app, js));
+                eprintln!("[bobcat] test js: {:?}", crate::html5_tools::run_js_pub(&app, js));
             });
         }
     }
@@ -847,7 +847,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
             let (secs, js, app) = (secs.parse::<u64>().unwrap_or(30), js.to_string(), app.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(secs));
-                eprintln!("[bobcat-gui] test main js: {:?}", crate::html5_tools::run_js_in(&app, "main", js));
+                eprintln!("[bobcat] test main js: {:?}", crate::html5_tools::run_js_in(&app, "main", js));
             });
         }
     }
@@ -856,13 +856,13 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
         let app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(secs));
-            eprintln!("[bobcat-gui] test: disconnecting now");
+            eprintln!("[bobcat] test: disconnecting now");
             close_window(&app);
             std::thread::sleep(Duration::from_millis(1500));
             if std::env::var("BOBCAT_TEST_RECONNECT").is_ok() {
-                eprintln!("[bobcat-gui] test: connecting again");
+                eprintln!("[bobcat] test: connecting again");
                 if let Err(e) = open(&app, &ip2, &user2, &pass2, false) {
-                    eprintln!("[bobcat-gui] test: reconnect failed: {e}");
+                    eprintln!("[bobcat] test: reconnect failed: {e}");
                 }
             }
         });

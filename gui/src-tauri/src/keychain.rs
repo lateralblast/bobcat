@@ -20,7 +20,7 @@ pub fn load(user: &str, ip: &str) -> Option<String> {
         Ok(p) => Some(p),
         Err(Error::NoEntry) => None,
         Err(e) => {
-            eprintln!("[bobcat-gui] could not read the keychain: {e}");
+            eprintln!("[bobcat] could not read the keychain: {e}");
             None
         }
     }
@@ -32,7 +32,7 @@ pub fn remember(user: &str, ip: &str, pass: &str) {
         return;
     }
     if let Err(e) = entry(user, ip).and_then(|en| en.set_password(pass).map_err(|e| e.to_string())) {
-        eprintln!("[bobcat-gui] could not save to the keychain: {e}");
+        eprintln!("[bobcat] could not save to the keychain: {e}");
     }
 }
 

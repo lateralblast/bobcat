@@ -3,10 +3,15 @@
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
 ## [1.4.0] - 2026-10-14
+### Changed
+- GUI: the VNC port field sits directly after Host with a colon between them (`host:port`); it was after User. Both are hidden for the other protocols as before.
+- `bobcat-gui` is now just `bobcat` (the GUI crate, its binary, the macOS app `bobcat.app` and the installer `bobcat_<version>_<arch>.dmg`; log lines start with `[bobcat]`). `bobcat-cli` keeps its name. The app identifier `au.com.lateralblast.bobcat` is unchanged. Earlier entries below still use the old name.
 ### Added
 - `build.sh --target mac|linux|windows [--arch arm64|x64|universal] [--no-cli]`: builds the installers into `dist/` (mac: a `.dmg`; linux: `.deb` and `.AppImage`; windows: an NSIS `-setup.exe`) and a release `bobcat-cli`. A target can only be built on its own platform. Only `--target mac` has been run (arm64); linux and windows are untested.
 - Cargo feature `vendored` (both crates): builds OpenSSL into the binary. `build.sh` turns it on so installers do not depend on Homebrew's OpenSSL (the first DMG linked `/opt/homebrew/opt/openssl@4`). Normal `cargo build` is unchanged.
 - Bundling is on in `tauri.conf.json` (identifier, category, macOS minimum 11.0) and the app has real icons (`icon.icns`, `icon.ico` and PNGs generated from `bobcat.png`).
+- The macOS app declares `NSLocalNetworkUsageDescription` (`gui/src-tauri/Info.plist`, merged into the bundle). Without it macOS Sequoia and later refuse LAN connections from a bundled app without asking, which showed as "connect failed: No route to host (os error 65)" from the DMG while `cargo run` (which uses Terminal's permission) worked. The first connection now asks for Local Network access; if it was refused, enable it under System Settings > Privacy & Security > Local Network.
+- The macOS bundle is now signed ad hoc as a bundle (`signingIdentity: "-"`), so its identifier is the stable `au.com.lateralblast.bobcat` and its `Info.plist` is sealed into the signature. Before, only the binary carried a signature with a per-build identifier (`bobcat_gui-<hash>`) and the `Info.plist` was not bound to it, so the Local Network usage description was not honoured.
 - The macOS app is not signed or notarized (ad-hoc signature only), so Gatekeeper warns on first launch (right-click > Open, or `xattr -dr com.apple.quarantine /Applications/bobcat-gui.app`).
 
 ## [1.3.9] - 2026-10-14

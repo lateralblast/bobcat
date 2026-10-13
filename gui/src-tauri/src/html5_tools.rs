@@ -1,4 +1,4 @@
-// bobcat-gui: Bobcat's own paste, copy and zoom controls for the embedded HTML5 console
+// bobcat: Bobcat's own paste, copy and zoom controls for the embedded HTML5 console
 // Version: 1.1.9
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 //

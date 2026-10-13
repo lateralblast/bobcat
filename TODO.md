@@ -47,5 +47,5 @@ Status: [ ] open, [~] in progress, [x] done
 - [ ] GUI: hide or avoid the brief certificate window of the HTML5 viewer
 - [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
 - [ ] GUI HTML5: on-screen keyboard through the same key events
-- [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried)
+- [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried and working, including the Local Network permission)
 - [ ] build.sh: test `--target linux` and `--target windows`, `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console

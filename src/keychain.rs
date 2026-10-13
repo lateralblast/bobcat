@@ -1,7 +1,7 @@
 // iDRAC passwords in the OS credential store (macOS Keychain, Windows
 // Credential Manager, Linux Secret Service). Login passwords: one entry per
 // user@ip (service "bobcat"). An empty user means the iDRAC's VNC password, kept
-// apart under the service "bobcat-vnc" (account: the ip). bobcat-gui shares both.
+// apart under the service "bobcat-vnc" (account: the ip). bobcat shares both.
 
 use keyring::{Entry, Error};
 

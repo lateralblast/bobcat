@@ -1,4 +1,4 @@
-// bobcat-gui - iDRAC VNC console viewer (Tauri 2)
+// bobcat - iDRAC VNC console viewer (Tauri 2)
 // Version: 1.1.9
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
@@ -171,7 +171,7 @@ struct Size {
 
 pub(crate) fn status(app: &AppHandle, msg: impl Into<String>) {
     let msg = msg.into();
-    eprintln!("[bobcat-gui] {msg}");
+    eprintln!("[bobcat] {msg}");
     let _ = app.emit("vnc-status", msg);
 }
 
@@ -335,9 +335,9 @@ fn tls_forwarder(ip: &str, port: u16) -> Result<u16, String> {
             }
         };
         match run() {
-            Ok(()) => eprintln!("[bobcat-gui] tls forwarder: connection closed"),
+            Ok(()) => eprintln!("[bobcat] tls forwarder: connection closed"),
             Err(e) => {
-                eprintln!("[bobcat-gui] tls forwarder: {e}");
+                eprintln!("[bobcat] tls forwarder: {e}");
                 *FWD_ERR.lock().unwrap() = Some(e);
             }
         }
@@ -432,7 +432,7 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
     client.set_encodings(&encodings()).map_err(|e| e.to_string())?;
     let fmt = client.format();
     if std::env::var("BOBCAT_DEBUG").is_ok() {
-        eprintln!("[bobcat-gui] pixel format: {fmt:?}");
+        eprintln!("[bobcat] pixel format: {fmt:?}");
     }
 
     let (mut w, mut h) = client.size();
@@ -467,7 +467,7 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
                 pixels_total += r.width as u64 * r.height as u64;
                 if std::env::var("BOBCAT_DEBUG").is_ok() && (rects <= 3 || rects % 200 == 0) {
                     eprintln!(
-                        "[bobcat-gui] +{:.1}s rect #{rects} {},{} {}x{} ({} Mpx total)",
+                        "[bobcat] +{:.1}s rect #{rects} {},{} {}x{} ({} Mpx total)",
                         started.elapsed().as_secs_f32(), r.left, r.top, r.width, r.height, pixels_total / 1_000_000
                     );
                 }
@@ -558,8 +558,8 @@ fn autoconnect() -> bool {
 /// BOBCAT_DEBUG=1 logs byte counts; BOBCAT_DEBUG=2 also the bytes (escaped).
 fn debug_bytes(dir: &str, bytes: &[u8]) {
     match std::env::var("BOBCAT_DEBUG").as_deref() {
-        Ok("2") => eprintln!("[bobcat-gui] {dir} {} bytes: {}", bytes.len(), bytes.escape_ascii()),
-        Ok(_) => eprintln!("[bobcat-gui] {dir} {} bytes", bytes.len()),
+        Ok("2") => eprintln!("[bobcat] {dir} {} bytes: {}", bytes.len(), bytes.escape_ascii()),
+        Ok(_) => eprintln!("[bobcat] {dir} {} bytes", bytes.len()),
         Err(_) => {}
     }
 }
@@ -584,7 +584,7 @@ fn ssh_goodbye(sess: &ssh2::Session, ch: &mut ssh2::Channel, send_quit: bool) {
     sess.set_blocking(true);
     let _ = ch.close();
     let _ = ch.wait_close();
-    let _ = sess.disconnect(Some(ssh2::DisconnectCode::ByApplication), "bobcat-gui closing", None);
+    let _ = sess.disconnect(Some(ssh2::DisconnectCode::ByApplication), "bobcat closing", None);
 }
 
 fn emit_term(app: &AppHandle, bytes: &[u8]) {
@@ -757,7 +757,7 @@ fn connect_text(app: AppHandle, state: State<Session>, protocol: String, ip: Str
     let (tx, rx) = channel();
     *state.0.lock().unwrap() = Some(tx);
     if std::env::var("BOBCAT_DEBUG").is_ok() {
-        eprintln!("[bobcat-gui] terminal size {cols}x{rows}");
+        eprintln!("[bobcat] terminal size {cols}x{rows}");
     }
     let handle = thread::spawn(move || {
         status(&app, format!("connecting to {ip} ({protocol})..."));
@@ -783,7 +783,7 @@ fn term_input(state: State<Session>, data: String) {
 #[tauri::command]
 fn term_resize(state: State<Session>, cols: u16, rows: u16) {
     if std::env::var("BOBCAT_DEBUG").is_ok() {
-        eprintln!("[bobcat-gui] terminal resized to {cols}x{rows}");
+        eprintln!("[bobcat] terminal resized to {cols}x{rows}");
     }
     send(&state, Cmd::Resize(cols, rows));
 }
@@ -831,7 +831,7 @@ fn default_user() -> String {
 #[tauri::command]
 fn connect(app: AppHandle, state: State<Session>, ip: String, port: u16, tls: bool, pass: String, remember: bool) {
     if std::env::var("BOBCAT_DEBUG").is_ok() {
-        eprintln!("[bobcat-gui] connect() called");
+        eprintln!("[bobcat] connect() called");
     }
     disconnect(state.clone());
     let (tx, rx) = channel();
@@ -1014,5 +1014,5 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
-        .expect("error running bobcat-gui");
+        .expect("error running bobcat");
 }

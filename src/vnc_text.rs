@@ -19,7 +19,7 @@ static FWD_ERR: Mutex<Option<String>> = Mutex::new(None);
 /// TLS leg of the iDRAC's encrypted VNC mode: TLS 1.2 (static-RSA AES256-GCM,
 /// self-signed certificate, ~10s handshake) with plain RFB inside. The `vnc`
 /// crate only does plain TCP, so a local forwarder handles the TLS. The
-/// certificate is pinned on first use (shared with bobcat-gui).
+/// certificate is pinned on first use (shared with bobcat).
 fn tls_forwarder(ip: &str, port: u16, trust_new: bool) -> Result<u16, String> {
     use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
@@ -96,7 +96,7 @@ fn tls_forwarder(ip: &str, port: u16, trust_new: bool) -> Result<u16, String> {
 }
 
 /// Trust on first use for the TLS certificate (key = the iDRAC's address, the same
-/// entry bobcat-gui uses). A changed certificate blocks the connection.
+/// entry bobcat uses). A changed certificate blocks the connection.
 fn check_pin(host: &str, tls: &openssl::ssl::SslStream<TcpStream>, trust_new: bool) -> Result<(), String> {
     let cert = tls.ssl().peer_certificate().ok_or("the iDRAC presented no certificate")?;
     let fp = cert

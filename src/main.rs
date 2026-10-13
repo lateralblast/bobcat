@@ -159,7 +159,7 @@ fn run(sess: &Session, cmd: &str) -> Result<String, String> {
     }
 }
 
-/// Saved SSH host key fingerprints and TLS certificate pins. Shared with bobcat-gui: same file,
+/// Saved SSH host key fingerprints and TLS certificate pins. Shared with bobcat: same file,
 /// SSH keys are "ssh:<ip>".
 fn pins_path() -> std::path::PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")

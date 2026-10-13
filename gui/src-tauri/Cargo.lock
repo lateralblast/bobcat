@@ -354,7 +354,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bobcat-gui"
+name = "bobcat"
 version = "1.4.0"
 dependencies = [
  "arboard",
