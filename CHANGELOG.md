@@ -2,6 +2,13 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.4.0] - 2026-10-14
+### Added
+- `build.sh --target mac|linux|windows [--arch arm64|x64|universal] [--no-cli]`: builds the installers into `dist/` (mac: a `.dmg`; linux: `.deb` and `.AppImage`; windows: an NSIS `-setup.exe`) and a release `bobcat-cli`. A target can only be built on its own platform. Only `--target mac` has been run (arm64); linux and windows are untested.
+- Cargo feature `vendored` (both crates): builds OpenSSL into the binary. `build.sh` turns it on so installers do not depend on Homebrew's OpenSSL (the first DMG linked `/opt/homebrew/opt/openssl@4`). Normal `cargo build` is unchanged.
+- Bundling is on in `tauri.conf.json` (identifier, category, macOS minimum 11.0) and the app has real icons (`icon.icns`, `icon.ico` and PNGs generated from `bobcat.png`).
+- The macOS app is not signed or notarized (ad-hoc signature only), so Gatekeeper warns on first launch (right-click > Open, or `xattr -dr com.apple.quarantine /Applications/bobcat-gui.app`).
+
 ## [1.3.9] - 2026-10-14
 ### Changed
 - GUI Java console (macOS): the iDRAC's certificate is trusted in the viewer by default. Bobcat has already checked it against its pin (trust on first use, a changed certificate is refused), so after the pin check it writes that certificate into the viewer's certificate store (`~/.config/bobcat/java-trust`) under the name the viewer itself uses (`EMR_<SHA-256 of the issuer in OpenSSL one-line form>_<serial>.pem`, found by looking at what "Always trust this certificate" saved), before the viewer starts. The viewer's warning now only appears for a certificate bobcat did not pin, and a changed certificate is never added. Untested in the GUI; an expired certificate (192.168.8.240) is still refused by the viewer's OpenSSL.

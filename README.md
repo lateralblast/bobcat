@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.3.9
+Version: 1.4.0
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -106,6 +106,20 @@ and password; SSH and SOL show a terminal.
   consoles); in SSH/SOL it copies the selection, or the whole visible screen.
 - **Text size:** the drop-down zooms the console; **Fit window** scales it to the window.
 - Closing the window (or Ctrl+C) hangs up SSH and SOL sessions cleanly so the iDRAC releases them.
+
+## Building installers
+
+```
+./build.sh --target mac        # dist/bobcat-gui_<version>_<arch>.dmg and dist/bobcat-cli-<version>-mac
+./build.sh --target mac --arch universal   # or arm64 / x64
+./build.sh --target linux      # .deb and .AppImage (build on Linux)
+./build.sh --target windows    # NSIS setup.exe (build on Windows, e.g. Git Bash)
+```
+
+Needs the Rust toolchain and `cargo install tauri-cli --version '^2'` (and `perl` for the bundled OpenSSL). Each target
+must be built on its own platform. The macOS app is not signed or notarized: on first launch right-click it and choose
+Open (or run `xattr -dr com.apple.quarantine /Applications/bobcat-gui.app`). Only the macOS (arm64) build has been
+tried.
 
 ## Files and variables
 
