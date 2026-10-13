@@ -1,0 +1,42 @@
+# TODO
+
+Status: [ ] open, [~] in progress, [x] done
+
+- [x] Add main script with --ip/--user/--pass flags (0.0.2)
+- [x] `--enable vnc` via racadm over SSH (0.0.3; verified on hardware)
+- [x] `--disable vnc` (0.0.4; untested against real hardware)
+- [x] Tauri GUI viewer showing the VNC framebuffer (0.0.9; frames received from hardware, on-screen rendering not yet confirmed)
+- [x] GUI: keyboard and mouse input (0.1.0; untested on hardware)
+- [x] GUI: Zrle compressed encoding (0.4.0; colours fixed in 0.4.1; verified on hardware)
+- [ ] GUI: Hextile/RRE encodings (not supported by the `vnc` crate) and CopyRect handling
+- [ ] Convert console screen to text for CLI use (SOL over SSH first, OCR as fallback)
+- [x] Create project tracking files (0.0.1)
+- [x] Verify SSH host keys, trust on first use (0.9.6)
+- [x] Set VNC SSL encryption via `--sslebl` (0.0.7)
+- [x] GUI: paste clipboard text as keystrokes (0.1.1; untested on hardware)
+- [x] GUI: copy text via drag-select OCR and server clipboard (0.1.2; untested, needs tesseract-ocr)
+- [ ] GUI: non-US keyboard layouts for paste
+- [x] `--check` for required packages (0.1.3)
+- [x] `--check --install` via apt-get (0.1.4)
+- [ ] `--check`/`--install`: support non-apt distros' package names
+- [x] GUI on-screen keyboard (0.2.1; untested on hardware)
+- [x] GUI: TLS for encrypted iDRAC VNC (0.3.0; verified on hardware)
+- [x] GUI: pin the iDRAC TLS certificate, trust on first use (0.5.0; verified on hardware)
+- [ ] GUI: faster TLS relay (0.3.2 poll(2) attempt caused disconnects; investigate with logs). Zrle (0.4.0) already cuts the traffic a lot.
+- [x] On-screen keyboard layouts US/UK/DE/FR (0.7.0; untested on hardware)
+- [ ] Paste (Ctrl+Shift+V) is still US-layout only; make it follow the selected keyboard layout
+- [x] `--enable sol` (0.9.1; verified read path, nothing needed changing)
+- [x] `--console sol` via ipmitool (0.9.2)
+- [x] `--console ssh` (iDRAC SSH `console com2`) without ipmitool (0.9.3)
+- [ ] `--console`: resize the remote terminal when the local window is resized
+- [x] GUI: SSH console and SOL via a Protocol drop-down (0.9.4; SSH verified, SOL untested in the GUI)
+- [x] GUI: verify the SSH host key for the SSH console (0.9.6)
+- [x] `--console vnc` text view with keyboard input, `--tls`/`--notls` (1.0.5; verified on the TrueNAS Linux console)
+- [ ] `--console vnc`: non-US keyboard layouts, colours/attributes, a cursor marker, and graphics-mode screens
+- [x] `--console vnc`: keep the learned character table between runs, per iDRAC (1.0.6)
+- [x] GUI: HTML5 console, now embedded in the main window (1.1.7)
+- [ ] GUI: HTML5 virtual media (the viewer passes vmPriv=false) and a `--console html5` for the CLI
+- [ ] GUI: HTML5 embedded view on macOS/Windows (only the Linux layout is implemented; other platforms use the separate window)
+- [ ] GUI: hide or avoid the brief certificate window of the HTML5 viewer
+- [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
+- [ ] GUI HTML5: on-screen keyboard through the same key events
