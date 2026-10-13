@@ -38,6 +38,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI: HTML5 console, now embedded in the main window (1.1.7)
 - [x] GUI: Java console as an external viewer (macOS and Linux, 1.3.6; downloads an x86_64 Java 8 on macOS; needs more testing)
 - [ ] GUI: Java console: virtual media (`vm=1`), a clean stop from Disconnect (SIGTERM leaves iDRAC sessions behind), and the keyboard library warning on macOS
+- [ ] GUI: Java console as a docked window (macOS): move and resize the viewer's window over the console area under the toolbar and keep it following the main window (hide/close with it). Needs the Accessibility permission (same one the keyboard library warning asks for), so first confirm that granting it removes that warning, and prompt for it in the app. A true sub-window is not possible across processes; alternatives are capture and re-draw (Screen Recording permission, laggy) or our own client for Dell's KVM protocol (large). Linux/X11 could reparent the window properly.
 - [ ] GUI: HTML5 virtual media (the viewer passes vmPriv=false) and a `--console html5` for the CLI
 - [x] GUI: HTML5 embedded view on macOS (1.3.0; frame-based layout between the toolbar and status bar; needs more testing)
 - [ ] GUI: HTML5 embedded view on Windows (other platforms still use the separate window)
