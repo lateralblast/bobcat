@@ -2,6 +2,11 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.2.8] - 2026-10-14
+### Fixed
+- GUI HTML5: an answer cut short by the iDRAC (connection ended without a TLS close before all the data arrived) was treated as complete, which showed up as a confusing `bad gzip body: incomplete deflate stream`. A body shorter than its `Content-Length`, or a gzip failure after such an early end, now reports that the iDRAC cut the answer short.
+- `gui/src-tauri/tauri.conf.json` carried an old version (1.1.9); it is now kept in sync with the `Cargo.toml` files.
+
 ## [1.2.7] - 2026-10-14
 ### Added
 - `bobcat-cli`: `--save` now covers every console. With `--console vnc` the VNC password is saved in the keychain (service `bobcat-vnc`, account: the iDRAC IP, the entry bobcat-gui uses) after the session ends normally, and later runs read it before prompting. Lookup order for the VNC password: `--vncpass` / `BOBCAT_VNC_PASS`, then the keychain, then the prompt.

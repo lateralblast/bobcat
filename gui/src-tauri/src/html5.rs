@@ -93,11 +93,17 @@ fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: O
     tls.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut raw = Vec::new();
     let mut buf = [0u8; 8192];
+    let mut read_error = None;
     loop {
         match tls.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => raw.extend_from_slice(&buf[..n]),
-            Err(_) if !raw.is_empty() => break, // the server may close without a TLS goodbye
+            // the server may close without a TLS goodbye; whether that cut the answer short is
+            // checked below against Content-Length / the gzip stream
+            Err(_) if !raw.is_empty() => {
+                read_error = Some("connection ended without a TLS close".to_string());
+                break;
+            }
             Err(e) => return Err(format!("read failed: {e}")),
         }
     }
@@ -109,13 +115,24 @@ fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: O
         .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
         .collect();
     let mut body = raw[split + 4..].to_vec();
+    let truncated = |what: &str| format!("{what} (the iDRAC cut the answer short: {})", read_error.as_deref().unwrap_or("connection closed early"));
     if headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("transfer-encoding") && v.contains("chunked")) {
         body = decode_chunked(&body);
+    } else if let Some(len) = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+    {
+        if body.len() < len {
+            return Err(truncated(&format!("{method} {path}: got {} of {len} bytes", body.len())));
+        }
     }
     // the iDRAC serves its static files only to clients that accept gzip
     if headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-encoding") && v.contains("gzip")) {
         let mut plain = Vec::new();
-        flate2::read::GzDecoder::new(&body[..]).read_to_end(&mut plain).map_err(|e| format!("bad gzip body: {e}"))?;
+        flate2::read::GzDecoder::new(&body[..]).read_to_end(&mut plain).map_err(|e| {
+            if read_error.is_some() { truncated(&format!("{method} {path}: bad gzip body: {e}")) } else { format!("bad gzip body: {e}") }
+        })?;
         body = plain;
     }
     Ok(Resp { status, headers, body })

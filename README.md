@@ -1,6 +1,6 @@
 # Bobcat
 
-Version: 1.2.7
+Version: 1.2.8
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.

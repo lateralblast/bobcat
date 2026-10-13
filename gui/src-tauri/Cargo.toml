@@ -1,6 +1,6 @@
 [package]
 name = "bobcat-gui"
-version = "1.2.7"
+version = "1.2.8"
 edition = "2021"
 license = "CC-BY-NC-SA-4.0"
 
