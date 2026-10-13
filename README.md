@@ -116,6 +116,19 @@ and password; SSH and SOL show a terminal.
 This project used to be called dracon. The old `~/.config/dracon-gui` and `~/.cache/dracon-cli` files are still read (and
 copied to the new locations); the old `DRACON_*` environment variables are no longer used, only `BOBCAT_*`.
 
+## Known issues
+
+### Java console: keyboard library warning (macOS)
+
+The Java viewer shows this warning when it starts:
+
+> The Native library for keyboard and mouse support failed to load!
+> To pass all keystrokes to the managed system, the
+> Virtual Console application requires direct access to your keyboard. You can enable this in System Preferences -> Universal Access and select "Enable access for assistive devices" option.
+> If this option is not enabled, the typed characters are passed to the managed system, but not all keyboard functions will work properly, and Single Cursor mode cannot be enabled.
+
+Typed text still reaches the server. Bobcat cannot set the option itself: on current macOS it is the Accessibility permission (System Settings > Privacy & Security > Accessibility), which only the user can grant. Whether granting it removes the warning is not yet confirmed (the library may be failing to load for another reason); this is an open item in `TODO.md`.
+
 ## License
 
 Licensed under CC BY-NC-SA 4.0. See [LICENSE.md](LICENSE.md).
