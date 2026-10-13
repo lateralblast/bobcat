@@ -23,22 +23,30 @@ pub(crate) const LABEL: &str = "html5console";
 
 /// A logged-in iDRAC web session we must log out of.
 #[derive(Clone)]
-struct WebSession {
-    ip: String,
-    cookie: String, // "-http-session-=..."
-    st2: String,
+pub(crate) struct WebSession {
+    pub(crate) ip: String,
+    pub(crate) cookie: String, // "-http-session-=..."
+    pub(crate) st2: String,
 }
 
-static SESSIONS: Mutex<Vec<WebSession>> = Mutex::new(Vec::new());
+pub(crate) static SESSIONS: Mutex<Vec<WebSession>> = Mutex::new(Vec::new());
 
-struct Resp {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
+/// The certificate each iDRAC presented on its last connection, kept only after it passed the pin
+/// check (PEM). The Java viewer's trust store is filled from it.
+static PEERS: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
+
+pub(crate) fn pinned_peer_pem(ip: &str) -> Option<Vec<u8>> {
+    PEERS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(i, _)| i == ip).map(|(_, p)| p.clone())
+}
+
+pub(crate) struct Resp {
+    pub(crate) status: u16,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Resp {
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
 }
@@ -62,7 +70,7 @@ fn decode_chunked(mut b: &[u8]) -> Vec<u8> {
 /// One HTTPS request on a fresh TLS connection. The certificate is checked against the
 /// pin (saved on first use) before anything is written, so credentials never reach an
 /// impostor.
-fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: Option<&str>) -> Result<Resp, String> {
+pub(crate) fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: Option<&str>) -> Result<Resp, String> {
     use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
     let addr = (ip, 443).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad address")?;
     let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| format!("connect failed: {e}"))?;
@@ -76,6 +84,11 @@ fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: O
     cfg.set_use_server_name_indication(false);
     let mut tls = cfg.connect(ip, tcp).map_err(|e| format!("tls handshake: {e}"))?;
     crate::check_pin(ip, &tls)?;
+    if let Some(pem) = tls.ssl().peer_certificate().and_then(|c| c.to_pem().ok()) {
+        let mut peers = PEERS.lock().unwrap_or_else(|e| e.into_inner());
+        peers.retain(|(i, _)| i != ip);
+        peers.push((ip.to_string(), pem));
+    }
 
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\nAccept-Encoding: gzip\r\nUser-Agent: bobcat-gui\r\n"
@@ -155,14 +168,21 @@ fn pct(s: &str) -> String {
 }
 
 /// What the console page needs, taken from a fresh login.
-struct Console {
-    session: WebSession,
-    url: String,
+pub(crate) struct Console {
+    pub(crate) session: WebSession,
+    pub(crate) url: String,
     /// the iDRAC's language strings: the viewer page reads them from window.opener.top.localeObj
     locale: String,
+    /// the first session token (ST1), which the Java viewer's launch file is requested with
+    pub(crate) st1: String,
 }
 
 fn login(ip: &str, user: &str, pass: &str) -> Result<Console, String> {
+    login_as(ip, user, pass, "2")
+}
+
+/// Log in and check that the iDRAC's virtual console plugin is `plugin` ("2" = HTML5, "1" = Java).
+pub(crate) fn login_as(ip: &str, user: &str, pass: &str, plugin: &str) -> Result<Console, String> {
     let body = format!("user={}&password={}", pct(user), pct(pass));
     let r = request(ip, "POST", "/data/login", &[], Some(&body))?;
     if r.status != 200 {
@@ -211,22 +231,31 @@ fn login(ip: &str, user: &str, pass: &str) -> Result<Console, String> {
     if pick(&props, "aimGetIntProp", "vkvm_bool_enabled") != "1" {
         return Err("the virtual console is disabled on the iDRAC (bobcat-cli --enable html5)".into());
     }
-    if pick(&props, "aimGetIntProp", "gui_kvm_plugin_type") != "2" {
-        return Err("the iDRAC console plugin is not HTML5 (bobcat-cli --enable html5 selects it)".into());
+    if pick(&props, "aimGetIntProp", "gui_kvm_plugin_type") != plugin {
+        return Err(if plugin == "1" {
+            "the iDRAC console plugin is not Java (bobcat-cli --enable java selects it)".into()
+        } else {
+            "the iDRAC console plugin is not HTML5 (bobcat-cli --enable html5 selects it)".into()
+        });
     }
-    let locale = request(ip, "GET", "/locale/locale_en.json", &[("Cookie", session.cookie.clone()), ("ST2", st2.clone())], None)?;
-    // the file is {"localeString": {...}}; the web interface uses the inner object as localeObj
-    let locale_obj = serde_json::from_slice::<serde_json::Value>(&locale.body)
-        .ok()
-        .and_then(|v| v.get("localeString").cloned())
-        .filter(|v| v.is_object())
-        .ok_or_else(|| format!("could not read the iDRAC language file (HTTP {})", locale.status))?;
+    // only the HTML5 viewer page reads the language file
+    let locale_obj = if plugin == "2" {
+        let locale = request(ip, "GET", "/locale/locale_en.json", &[("Cookie", session.cookie.clone()), ("ST2", st2.clone())], None)?;
+        // the file is {"localeString": {...}}; the web interface uses the inner object as localeObj
+        serde_json::from_slice::<serde_json::Value>(&locale.body)
+            .ok()
+            .and_then(|v| v.get("localeString").cloned())
+            .filter(|v| v.is_object())
+            .ok_or_else(|| format!("could not read the iDRAC language file (HTTP {})", locale.status))?
+    } else {
+        serde_json::Value::Null
+    };
     let aim = pick(&ssn, "getSsnVar", "aimSession");
     let port = pick(&props, "aimGetIntProp", "rp_int_apcp_port");
     let url = format!(
         "https://{ip}/virtualconsolehtml5.html?ipAddr={ip}&kvmPort={port}&vmPriv=false&lang=en&aimSession={aim}&ST2={st2}&TokenName=ST1&TokenKey={st1}"
     );
-    Ok(Console { session, url, locale: locale_obj.to_string() })
+    Ok(Console { session, url, locale: locale_obj.to_string(), st1 })
 }
 
 fn logout(s: &WebSession) {
@@ -384,7 +413,7 @@ fn pin_webview_tls(_webview: &tauri::Webview) {}
 
 /// The iDRAC ends idle web sessions; the viewer page does not keep this one alive without
 /// its original opener window, so ping the session every couple of minutes while it exists.
-fn keep_alive(s: WebSession) {
+pub(crate) fn keep_alive(s: WebSession) {
     std::thread::spawn(move || loop {
         for _ in 0..120 {
             std::thread::sleep(Duration::from_secs(1));
@@ -403,7 +432,7 @@ static TOP_HEIGHT: AtomicI32 = AtomicI32::new(0);
 /// Only macOS uses it: there the console view sits between the toolbar and the status bar.
 static BAR_HEIGHT: AtomicI32 = AtomicI32::new(0);
 
-fn debug_on() -> bool {
+pub(crate) fn debug_on() -> bool {
     std::env::var("BOBCAT_DEBUG").is_ok()
 }
 

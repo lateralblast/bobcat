@@ -36,6 +36,8 @@ Status: [ ] open, [~] in progress, [x] done
 - [ ] `--console vnc`: non-US keyboard layouts, colours/attributes, a cursor marker, and graphics-mode screens
 - [x] `--console vnc`: keep the learned character table between runs, per iDRAC (1.0.6)
 - [x] GUI: HTML5 console, now embedded in the main window (1.1.7)
+- [x] GUI: Java console as an external viewer (macOS and Linux, 1.3.6; downloads an x86_64 Java 8 on macOS; needs more testing)
+- [ ] GUI: Java console: virtual media (`vm=1`), a clean stop from Disconnect (SIGTERM leaves iDRAC sessions behind), and the keyboard library warning on macOS
 - [ ] GUI: HTML5 virtual media (the viewer passes vmPriv=false) and a `--console html5` for the CLI
 - [x] GUI: HTML5 embedded view on macOS (1.3.0; frame-based layout between the toolbar and status bar; needs more testing)
 - [ ] GUI: HTML5 embedded view on Windows (other platforms still use the separate window)

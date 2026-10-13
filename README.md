@@ -1,6 +1,6 @@
 # Bobcat
 
-Version: 1.3.5
+Version: 1.3.9
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -66,10 +66,10 @@ BOBCAT_VNC_PASS='<vnc password>' cargo run
 Requires the Tauri 2 Linux dependencies (WebKitGTK 4.1). No Node/npm needed. Enter the iDRAC IP and password
 (prefilled from `BOBCAT_VNC_PASS`) and click Connect.
 
-Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (Dell's own web console in its own window), **SSH**
-(the iDRAC's `console com2`) or **SOL** (IPMI Serial over LAN via `ipmitool`). HTML5, SSH and SOL need the iDRAC username
+Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (Dell's own web console), **Java** (Dell's Java console, in a window of its own), **SSH**
+(the iDRAC's `console com2`) or **SOL** (IPMI Serial over LAN via `ipmitool`). HTML5, Java, SSH and SOL need the iDRAC username
 and password; SSH and SOL show a terminal.
-`BOBCAT_PROTOCOL=vnc|html5|ssh|sol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL and HTML5, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
+`BOBCAT_PROTOCOL=vnc|html5|java|ssh|sol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL, HTML5 and Java, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
 
 - **HTML5:** logs in to the iDRAC web interface (certificate checked against the pin first) and shows its HTML5
   console inside the main window, under the toolbar (a second web view; a small certificate window flashes up for
@@ -78,6 +78,19 @@ and password; SSH and SOL show a terminal.
   The console is Dell's own page, so its keyboard, mouse and menus are Dell's. Bobcat's **Copy** (reads the
   screen with OCR; needs `tesseract-ocr`), **Paste** (types your clipboard in, US layout) and **text size**
   (zoom) buttons work on it and sit on the second toolbar row beside Certificate; the on-screen keyboard is not used.
+- **Java** (macOS and 64-bit Linux): logs in, downloads Dell's viewer from the iDRAC over the pinned connection and
+  runs it with `java`, in a window of its own (it cannot be embedded). The Java viewer must be selected on the iDRAC
+  (`bobcat-cli --enable java`). On macOS the viewer's native libraries are Intel-only, so it needs an x86_64 Java 8:
+  the first time, bobcat asks and then downloads Azul Zulu 8 into `~/.config/bobcat/java` (checksum checked, nothing
+  installed system-wide; Rosetta 2 is needed on Apple Silicon). `BOBCAT_JAVA=<path to java>` uses another runtime
+  (on Linux `java` from the PATH is used). Virtual media is off (`BOBCAT_JAVA_VM=1` keeps what the iDRAC asks for).
+  The viewer checks the iDRAC's certificate itself and warns when it does not chain to a known root. On macOS bobcat
+  sets the viewer's "User's Certificate Store Path" (unless you have set your own) to `~/.config/bobcat/java-trust` and
+  puts the iDRAC's certificate there once bobcat has checked it against its pin (trust on first use), so the viewer's
+  warning does not appear; a changed certificate is refused by bobcat and never added.
+  Close the viewer's window or press Disconnect to end the session; the viewer's output is in
+  `~/.config/bobcat/java-viewer/<ip>/viewer.log`. The viewer's own warning that its keyboard library failed to load
+  is harmless (typed text still works; some keys and Single Cursor mode do not).
 - **VNC:** click the screen to send keyboard and mouse input (Ctrl+Alt+Del button provided). Compressed Zrle
   updates are requested; set `BOBCAT_ENCODING=raw` to force uncompressed Raw.
 - **TLS:** if VNC SSL encryption is enabled on the iDRAC (`bobcat-cli --enable vnc --sslebl Auto_Negotiate`),

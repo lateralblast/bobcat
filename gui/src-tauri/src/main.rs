@@ -4,6 +4,7 @@
 
 mod html5;
 mod html5_tools;
+mod java_console;
 mod keychain;
 
 use std::collections::HashMap;
@@ -67,6 +68,7 @@ fn shutdown(app: &AppHandle) {
         }
     }
     html5::close_window(app);
+    java_console::stop();
     html5::logout_all();
     wait_text_session(8);
 }
@@ -75,7 +77,7 @@ static LAST_HOSTKEY: Mutex<Option<CertInfo>> = Mutex::new(None);
 /// Why the TLS forwarder gave up, so run() can report it instead of a bare reset.
 static FWD_ERR: Mutex<Option<String>> = Mutex::new(None);
 
-fn pins_path() -> std::path::PathBuf {
+pub(crate) fn pins_path() -> std::path::PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
@@ -535,7 +537,7 @@ fn trust_cert(kind: Option<String>) -> Result<(), String> {
 #[tauri::command]
 fn default_password(protocol: Option<String>) -> String {
     let var = match protocol.as_deref() {
-        Some("ssh") | Some("sol") | Some("html5") => "BOBCAT_PASS",
+        Some("ssh") | Some("sol") | Some("html5") | Some("java") => "BOBCAT_PASS",
         _ => "BOBCAT_VNC_PASS",
     };
     std::env::var(var).unwrap_or_default()
@@ -1010,7 +1012,7 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat-gui");
 }

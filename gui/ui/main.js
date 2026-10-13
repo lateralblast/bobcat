@@ -58,7 +58,9 @@ $('go').onclick = () => {
   const remember = $('remember').checked;
   // Remember was ticked off for a loaded entry: delete it
   if (!remember && savedFor) { invoke('forget_password', savedFor); savedFor = null; }
-  if (proto === 'html5') {
+  if (proto === 'java') {
+    invoke('connect_java', { ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember });
+  } else if (proto === 'html5') {
     reportLayout();
     invoke('connect_html5', { ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember });
   } else if (proto === 'vnc') {
@@ -71,7 +73,17 @@ $('go').onclick = () => {
     term.focus();
   }
 };
-$('stop').onclick = () => { invoke('disconnect'); if ($('proto').value === 'html5') invoke('disconnect_html5'); };
+$('stop').onclick = () => {
+  invoke('disconnect');
+  if ($('proto').value === 'html5') invoke('disconnect_html5');
+  if ($('proto').value === 'java') invoke('disconnect_java');
+};
+
+// The Java console needs a Java runtime; the app asks before downloading one.
+listen('java-need-runtime', () => { $('jre').style.display = 'flex'; });
+listen('java-runtime-ready', () => { $('go').click(); });
+$('jredownload').onclick = () => { $('jre').style.display = 'none'; invoke('download_java_runtime'); };
+$('jrecancel').onclick = () => { $('jre').style.display = 'none'; };
 
 listen('vnc-status', (e) => { $('status').textContent = e.payload; $('status').title = e.payload; });
 const PAD = 16; // black border on every side (also keeps the last line from being cut off)
@@ -420,23 +432,25 @@ listen('term-data', (e) => {
 // show only the controls that apply to the chosen protocol
 function setProto() {
   const proto = $('proto').value;
-  const kind = proto === 'vnc' ? 'vnc' : proto === 'html5' ? 'html5' : 'text';
+  const kind = proto === 'vnc' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
   const hide = (sel, yes) => document.querySelectorAll(sel).forEach((el) => el.classList.toggle('hidden', yes));
   hide('.vnc-only', kind !== 'vnc');
   hide('.login-only', kind === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
+  hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
   $('wrap').classList.toggle('hidden', kind !== 'vnc');
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');
+  $('javanote').classList.toggle('hidden', kind !== 'java');
   $('pass').placeholder = kind === 'vnc' ? 'VNC password' : 'iDRAC password';
   // the Certificate button shows the TLS certificate (VNC, HTML5) or SSH host key; SOL has neither
-  $('certbtn').classList.toggle('hidden', proto === 'sol');
+  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java');
   $('certbtn').textContent = proto === 'ssh' ? 'Host key' : 'Certificate';
   if (kind === 'text') { ensureTerm(); fit.fit(); }
   reportLayout();
   invoke('default_password', { protocol: proto }).then((pw) => { if (pw) $('pass').value = pw; else fillSaved(); });
 }
-$('proto').onchange = () => { invoke('disconnect'); invoke('disconnect_html5'); setProto(); };
+$('proto').onchange = () => { invoke('disconnect'); invoke('disconnect_html5'); invoke('disconnect_java'); setProto(); };
 setProto();
 
 // ---- HTML5 console embedded below the toolbar ----------------------------

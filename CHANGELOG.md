@@ -2,6 +2,26 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.3.9] - 2026-10-14
+### Changed
+- GUI Java console (macOS): the iDRAC's certificate is trusted in the viewer by default. Bobcat has already checked it against its pin (trust on first use, a changed certificate is refused), so after the pin check it writes that certificate into the viewer's certificate store (`~/.config/bobcat/java-trust`) under the name the viewer itself uses (`EMR_<SHA-256 of the issuer in OpenSSL one-line form>_<serial>.pem`, found by looking at what "Always trust this certificate" saved), before the viewer starts. The viewer's warning now only appears for a certificate bobcat did not pin, and a changed certificate is never added. Untested in the GUI; an expired certificate (192.168.8.240) is still refused by the viewer's OpenSSL.
+
+## [1.3.8] - 2026-10-14
+### Changed
+- GUI Java console (macOS): the certificate warning of 1.3.7 was not removed by `SSL_CERT_DIR` (the viewer's OpenSSL ignores it), so that was dropped. The viewer has its own "User's Certificate Store Path" preference (Tools > Session Options > Certificate); once it is set, the warning offers "Always trust this certificate". Bobcat now sets that preference (`USER_CERT_STORE_PATH` in `com.avocent.viewer`, through `defaults` and PlistBuddy) to `~/.config/bobcat/java-trust`, unless the user has chosen a path of their own. Writing the trusted certificate there from the pinned one, so the warning never shows, is the next step (the format the viewer stores is still to be looked at).
+
+## [1.3.7] - 2026-10-14
+### Changed
+- GUI Java console: the viewer's own certificate warning ("The connection to <ip> is untrusted") is meant to go away for certificates bobcat has pinned. The viewer is started with `SSL_CERT_DIR` pointing at a directory of the system root certificates (macOS; `/etc/ssl/certs` stays in the list elsewhere) plus the iDRAC's pinned certificate chain. An expired certificate is still refused by the viewer's OpenSSL and still shows the dialog; untested against a valid or default self-signed certificate.
+
+## [1.3.6] - 2026-10-14
+### Added
+- GUI: **Java** protocol, the iDRAC's Java virtual console in a window of its own (macOS and 64-bit Linux; it cannot be embedded). Bobcat logs in, requests the Web Start launch file, downloads the viewer jar and its native libraries over the pinned connection, and starts `java` on them directly (no Java Web Start). The iDRAC must use the Java plugin (`bobcat-cli --enable java`).
+- macOS: the viewer's native libraries are Intel-only, so it needs an x86_64 Java 8. The first connect asks, then downloads Azul Zulu 8 into `~/.config/bobcat/java` after checking its SHA-256 against Azul's published value (nothing system-wide; Rosetta 2 needed on Apple Silicon). `BOBCAT_JAVA` selects another runtime. Apple's stub `libssl` kills the viewer's virtual-media library, so the downloaded copy has its hard-coded `/usr/lib/libssl.dylib` path changed to one that fails normally (the library then uses its built-in OpenSSL), and the viewer runs with TLS 1.2 and no extended master secret, which the iDRAC needs. Details in RESEARCH.md.
+- Virtual media is off in the Java viewer (`vm=0`); `BOBCAT_JAVA_VM=1` keeps what the iDRAC asks for. Disconnect ends the viewer with SIGTERM; closing the viewer's own window is the clean way (see TODO.md).
+### Changed
+- `html5.rs`: the login takes the expected plugin (HTML5 or Java); several helpers are shared with the Java console.
+
 ## [1.3.5] - 2026-10-14
 ### Changed
 - GUI: removed the "Protocol" label in front of the protocol drop-down (it keeps a tooltip and an accessible name).
