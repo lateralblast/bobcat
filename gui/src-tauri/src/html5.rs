@@ -258,7 +258,111 @@ fn pin_webview_tls(webview: &tauri::Webview) {
     });
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: WKWebView refuses a self-signed certificate unless the navigation delegate answers the
+/// server-trust challenge, and wry's delegate does not. Add that method to the delegate's class
+/// (once; every web view shares the class): accept the certificate only if its SHA-256 is exactly
+/// the pinned one for that host, otherwise cancel.
+#[cfg(target_os = "macos")]
+fn pin_webview_tls(webview: &tauri::Webview) {
+    use objc2::ffi::class_addMethod;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::{msg_send, sel};
+    static ADDED: std::sync::Once = std::sync::Once::new();
+    let _ = webview.with_webview(|pw| unsafe {
+        let wk = pw.inner() as *mut AnyObject;
+        // the viewer opens its certificate window automatically when it loads
+        let config: *mut AnyObject = msg_send![wk, configuration];
+        let prefs: *mut AnyObject = msg_send![config, preferences];
+        let _: () = msg_send![prefs, setJavaScriptCanOpenWindowsAutomatically: true];
+        let delegate: *mut AnyObject = msg_send![wk, navigationDelegate];
+        if debug_on() {
+            eprintln!("[bobcat-gui] macOS web view delegate: {delegate:?}");
+        }
+        if delegate.is_null() {
+            return;
+        }
+        let class = (*delegate).class() as *const AnyClass as *mut _;
+        ADDED.call_once(|| {
+            let imp: unsafe extern "C-unwind" fn() = std::mem::transmute(mac_tls::challenge as mac_tls::Challenge);
+            let ok = class_addMethod(
+                class,
+                sel!(webView:didReceiveAuthenticationChallenge:completionHandler:),
+                imp,
+                c"v@:@@@?".as_ptr(),
+            );
+            if !ok.as_bool() {
+                eprintln!("[bobcat-gui] could not add the certificate check to the web view");
+            }
+        });
+        // WebKit caches which delegate methods exist when the delegate is set, so set it again
+        // (every web view needs this) or the method added above is never called
+        let _: () = msg_send![wk, setNavigationDelegate: delegate];
+    });
+}
+
+#[cfg(target_os = "macos")]
+mod mac_tls {
+    use objc2::encode::{Encode, Encoding};
+    use objc2::runtime::{AnyClass, AnyObject, Sel};
+    use objc2::msg_send;
+    use std::ffi::{c_void, CStr};
+
+    #[repr(transparent)]
+    #[derive(Clone, Copy)]
+    struct SecTrustPtr(*mut c_void);
+    unsafe impl Encode for SecTrustPtr {
+        const ENCODING: Encoding = Encoding::Pointer(&Encoding::Struct("__SecTrust", &[]));
+    }
+
+    pub type Challenge = extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject, &block2::Block<dyn Fn(isize, *mut AnyObject)>);
+
+    unsafe fn text(s: *mut AnyObject) -> String {
+        if s.is_null() {
+            return String::new();
+        }
+        let p: *const std::ffi::c_char = unsafe { msg_send![s, UTF8String] };
+        if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
+    }
+
+    // NSURLSessionAuthChallengeDisposition: 0 use credential, 1 default handling, 2 cancel
+    pub extern "C" fn challenge(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        _webview: *mut AnyObject,
+        challenge: *mut AnyObject,
+        completion: &block2::Block<dyn Fn(isize, *mut AnyObject)>,
+    ) {
+        use core_foundation::base::TCFType;
+        use security_framework::trust::SecTrust;
+        unsafe {
+            let space: *mut AnyObject = msg_send![challenge, protectionSpace];
+            let method = text(msg_send![space, authenticationMethod]);
+            let host = text(msg_send![space, host]);
+            if super::debug_on() {
+                eprintln!("[bobcat-gui] challenge: {method} for {host}");
+            }
+            let trust: SecTrustPtr = msg_send![space, serverTrust];
+            if method != "NSURLAuthenticationMethodServerTrust" || trust.0.is_null() {
+                return completion.call((1, std::ptr::null_mut()));
+            }
+            let st = SecTrust::wrap_under_get_rule(trust.0 as _);
+            let fp = st.certificate_at_index(0).and_then(|c| {
+                let h = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), &c.to_der()).ok()?;
+                Some(h.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":"))
+            });
+            if fp.is_some() && crate::load_pins().get(&host) == fp.as_ref() {
+                let class = AnyClass::get(c"NSURLCredential").unwrap();
+                let cred: *mut AnyObject = msg_send![class, credentialForTrust: trust];
+                completion.call((0, cred));
+            } else {
+                eprintln!("[bobcat-gui] blocked a certificate for {host} that does not match the pinned one ({})", fp.unwrap_or_default());
+                completion.call((2, std::ptr::null_mut()));
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn pin_webview_tls(_webview: &tauri::Webview) {}
 
 /// The iDRAC ends idle web sessions; the viewer page does not keep this one alive without
@@ -505,6 +609,12 @@ fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Strin
         .build()
         .map_err(|e| e.to_string())?;
     pin_webview_tls(win.as_ref());
+    // with_webview runs on the main thread later; wait for it so the certificate check is in
+    // place before the first navigation (otherwise the self-signed certificate is rejected)
+    let (tx, rx) = std::sync::mpsc::channel();
+    if win.as_ref().with_webview(move |_| drop(tx.send(()))).is_ok() {
+        let _ = rx.recv_timeout(Duration::from_secs(5));
+    }
     let app_for_close = app.clone();
     win.on_window_event(move |event| {
         // the user closed the window: disconnect the viewer properly first
@@ -513,20 +623,37 @@ fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Strin
             disconnect_in_background(&app_for_close);
         }
     });
-    set_session_cookie(win.as_ref(), ip, &console.session)?;
-    win.navigate(console.url.parse().map_err(|e| format!("{e}"))?).map_err(|e| e.to_string())?;
+    let cookie_result = set_session_cookie(win.as_ref(), ip, &console.session);
+    if debug_on() {
+        eprintln!("[bobcat-gui] set cookie: {cookie_result:?}");
+    }
+    cookie_result?;
+    let nav_result = win.navigate(console.url.parse().map_err(|e| format!("{e}"))?).map_err(|e| e.to_string());
+    if debug_on() {
+        eprintln!("[bobcat-gui] navigate to {}: {nav_result:?}", console.url.split('?').next().unwrap_or(""));
+    }
+    nav_result?;
     Ok(())
 }
 
-fn open(app: &AppHandle, ip: &str, user: &str, pass: &str) -> Result<(), String> {
+fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Result<(), String> {
     close_window(app);
     crate::status(app, format!("logging in to {ip} (the iDRAC takes ~5s)..."));
     let console = login(ip, user, pass).map_err(|e| {
         logout_all(); // a half-finished login must not leave a session behind
         e
     })?;
+    if remember {
+        crate::keychain::remember(user, ip, pass);
+    }
     keep_alive(console.session.clone());
-    let embedded = match open_embedded(app, ip, &console) {
+    // the embedded child view is only laid out on Linux; elsewhere use a window of its own
+    let embedded_result = if cfg!(target_os = "linux") {
+        open_embedded(app, ip, &console)
+    } else {
+        Err("embedding is only implemented on Linux".to_string())
+    };
+    let embedded = match embedded_result {
         Ok(()) => true,
         Err(e) => {
             if debug_on() {
@@ -580,6 +707,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str) -> Result<(), String>
             });
         }
     }
+    #[cfg(target_os = "linux")]
     if let Ok(spec) = std::env::var("BOBCAT_TEST_JS") {
         // "<seconds>:<javascript expression>": evaluate it in the console page and log the result
         if let Some((secs, js)) = spec.split_once(':') {
@@ -590,6 +718,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str) -> Result<(), String>
             });
         }
     }
+    #[cfg(target_os = "linux")]
     if let Ok(spec) = std::env::var("BOBCAT_TEST_MAINJS") {
         // like BOBCAT_TEST_JS but in the main (toolbar) page
         if let Some((secs, js)) = spec.split_once(':') {
@@ -610,7 +739,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str) -> Result<(), String>
             std::thread::sleep(Duration::from_millis(1500));
             if std::env::var("BOBCAT_TEST_RECONNECT").is_ok() {
                 eprintln!("[bobcat-gui] test: connecting again");
-                if let Err(e) = open(&app, &ip2, &user2, &pass2) {
+                if let Err(e) = open(&app, &ip2, &user2, &pass2, false) {
                     eprintln!("[bobcat-gui] test: reconnect failed: {e}");
                 }
             }
@@ -631,9 +760,9 @@ fn disconnect_in_background(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn connect_html5(app: AppHandle, ip: String, user: String, pass: String) {
+pub fn connect_html5(app: AppHandle, ip: String, user: String, pass: String, remember: bool) {
     std::thread::spawn(move || {
-        if let Err(e) = open(&app, &ip, &user, &pass) {
+        if let Err(e) = open(&app, &ip, &user, &pass, remember) {
             crate::status(&app, format!("error: {e}"));
         }
     });

@@ -19,6 +19,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] `--check` for required packages (0.1.3)
 - [x] `--check --install` via apt-get (0.1.4)
 - [ ] `--check`/`--install`: support non-apt distros' package names
+- [x] `--check`/`--install` on macOS: skip Linux-only GUI probes, use Homebrew (1.2.0)
 - [x] GUI on-screen keyboard (0.2.1; untested on hardware)
 - [x] GUI: TLS for encrypted iDRAC VNC (0.3.0; verified on hardware)
 - [x] GUI: pin the iDRAC TLS certificate, trust on first use (0.5.0; verified on hardware)
@@ -37,6 +38,8 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI: HTML5 console, now embedded in the main window (1.1.7)
 - [ ] GUI: HTML5 virtual media (the viewer passes vmPriv=false) and a `--console html5` for the CLI
 - [ ] GUI: HTML5 embedded view on macOS/Windows (only the Linux layout is implemented; other platforms use the separate window)
+- [x] CLI: iDRAC password in the OS keychain (`--save` / `--forget`) (1.2.1)
+- [x] GUI: use the keychain for iDRAC passwords, Remember checkbox (1.2.2)
 - [ ] GUI: hide or avoid the brief certificate window of the HTML5 viewer
 - [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
 - [ ] GUI HTML5: on-screen keyboard through the same key events

@@ -1,5 +1,5 @@
 // bobcat-cli: turn a screenshot of a text console into text.
-// Version: 1.1.9
+// Version: 1.2.7
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 //
 // A text console draws every character as a small bitmap on a fixed grid, so each

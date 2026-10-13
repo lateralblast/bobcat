@@ -55,16 +55,17 @@
       </select>
     </label>
     <input id="ip" value="192.168.8.98" size="16" placeholder="iDRAC IP">
-    <input id="user" class="login-only" value="root" size="10" placeholder="iDRAC user">
+    <input id="user" class="login-only" value="" size="10" placeholder="iDRAC user">
     <input id="port" class="vnc-only" value="5901" size="5">
     <input id="pass" type="password" size="10" placeholder="VNC password">
+    <label title="Keep the password in the OS keychain (saved once the login works)"><input id="remember" type="checkbox"> Remember</label>
     <label class="vnc-only" title="Use when the iDRAC VNC SSL encryption is enabled"><input id="tls" type="checkbox"> TLS</label>
     <button id="go">Connect</button>
     <button id="stop">Disconnect</button>
   </div>
   <div class="row">
+    <button id="copy" title="Drag to select text on screen">Copy</button>
     <button id="paste" title="Ctrl+Shift+V">Paste</button>
-    <button id="copy" title="Drag to select text on screen">Copy text</button>
     <button class="no-html5" id="kbd">Keyboard</button>
     <button id="certbtn">Certificate</button>
     <button class="vnc-only" id="cad">Ctrl+Alt+Del</button>

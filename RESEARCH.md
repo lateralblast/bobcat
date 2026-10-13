@@ -29,7 +29,7 @@ Notes and findings that don't belong in TODO.md or README.md.
 - iDRAC8 attributes: `iDRAC.IPMILan.Enable`, `iDRAC.IPMISOL.{Enable,BaudRate,MinPrivilege}` (MinPrivilege 4 = Administrator), `iDRAC.Serial.Enable`, `iDRAC.SerialRedirection.Enable`; BIOS `BIOS.SerialCommSettings.{SerialComm,SerialPortAddress,RedirAfterBoot,FailSafeBaud,ConTermType}`. Test server already had SerialComm=OnConRedirCom2, SerialPortAddress=Serial1Com2Serial2Com1, RedirAfterBoot=Enabled, FailSafeBaud=115200, ConTermType=Ansi, IPMISOL baud 115200, iDRAC.Serial baud 57600.
 - BIOS attribute changes are staged and need `racadm jobqueue create BIOS.Setup.1-1` plus a reboot to apply.
 
-- `ssh root@idrac console com2` (PTY + exec `console com2`) prints "Connected to Serial Device 2. To end type: ^\" (quit key set by iDRAC.SerialRedirection.QuitKey). It coexisted with an active ipmitool SOL session. SOL via `ipmitool -I lanplus` works with the default cipher suite (17) on iDRAC8 2.86.86.86.
+- `ssh <user>@idrac console com2` (PTY + exec `console com2`) prints "Connected to Serial Device 2. To end type: ^\" (quit key set by iDRAC.SerialRedirection.QuitKey). It coexisted with an active ipmitool SOL session. SOL via `ipmitool -I lanplus` works with the default cipher suite (17) on iDRAC8 2.86.86.86.
 
 ## Serial console redraw scrolling (0.9.9)
 - The TrueNAS console menu (prompt_toolkit) asks the cursor row with ESC[6n, then prints (H - row) newlines and moves up that many lines, where H = 66 is the height the remote tty believes (independent of our pty size: tested with 30, 50 and 70 rows). With a reported row of 66 or more it prints none and redraws in place. A terminal shorter than 66 rows therefore scrolls on each redraw; a tall terminal (as in the CLI) does not. Reproduced with a pty harness that answers ESC[6n with a chosen row (14 -> 52 newlines, 40 -> 26, >=66 -> none).
@@ -66,4 +66,4 @@ Notes and findings that don't belong in TODO.md or README.md.
 - The page loads Prototype.js, which changes `Array.prototype`: `Array.prototype.map.call(HTMLCollection, ...)` fails ("this.each is not a function") and `JSON.stringify([...])` is double-encoded (a quoted string). Use `forEach` loops and `join(',')`.
 - `webview.set_zoom(f)` zooms the whole page (Dell's buttons too); the canvas then overflows and scrolls.
 - `WebViewExt::snapshot(SnapshotRegion::Visible, ...)` returns a cairo surface even on Xvfb, so a headless test can see the console; WebViewExt::run_javascript (deprecated since WebKit 2.40) returns a script's value. Commands that wait for these must not run on the main thread (use `async` commands).
-- tesseract on the console canvas: bilinear 4x of the inverted grayscale reads `root@truenas[/]# a` exactly; cairo's own 3x scaling read `[/]#` as `(7)`; Lanczos 3x added a space.
+- tesseract on the console canvas: bilinear 4x of the inverted grayscale reads `<user>@<host>[/]# a` exactly; cairo's own 3x scaling read `[/]#` as `(7)`; Lanczos 3x added a space.

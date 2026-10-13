@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.1.9
+// Version: 1.2.7
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use std::process::ExitCode;
 use std::time::Duration;
 
+mod keychain;
 mod screen_text;
 mod vnc_text;
 
@@ -84,6 +85,15 @@ struct Args {
     /// interactive prompt: command-line arguments are visible in `ps`)
     #[arg(long = "pass", env = "BOBCAT_PASS", hide_env_values = true)]
     pass: Option<String>,
+
+    /// After success, save the iDRAC login password (sol, ssh, --enable/--disable) and the VNC
+    /// password (--console vnc) in the OS keychain; they are used automatically next time
+    #[arg(long)]
+    save: bool,
+
+    /// Remove the saved keychain passwords (login for --user, and VNC) for --ip, then exit
+    #[arg(long)]
+    forget: bool,
 
     /// VNC password to set with --enable vnc (visible in `ps`; prefer the
     /// BOBCAT_VNC_PASS environment variable or the interactive prompt)
@@ -322,7 +332,8 @@ fn disable_vnc(sess: &Session) -> Result<(), String> {
 enum Probe {
     /// Executable found in PATH
     Bin(&'static str),
-    /// Shared library soname known to the dynamic linker
+    /// Shared library soname known to the dynamic linker (Linux only)
+    #[cfg(target_os = "linux")]
     Lib(&'static str),
 }
 
@@ -331,6 +342,8 @@ struct Dep {
     probe: Probe,
     /// Debian/Ubuntu package that provides it
     apt: &'static str,
+    /// Homebrew formula (macOS)
+    brew: &'static str,
     purpose: &'static str,
 }
 
@@ -339,24 +352,30 @@ const DEPS: &[Dep] = &[
         name: "ipmitool",
         probe: Probe::Bin("ipmitool"),
         apt: "ipmitool",
+        brew: "ipmitool",
         purpose: "--console sol",
     },
     Dep {
         name: "tesseract",
         probe: Probe::Bin("tesseract"),
         apt: "tesseract-ocr",
-        purpose: "--console vnc, GUI: Copy text (OCR)",
+        brew: "tesseract",
+        purpose: "--console vnc, GUI: Copy (OCR)",
     },
+    #[cfg(target_os = "linux")]
     Dep {
         name: "WebKitGTK 4.1",
         probe: Probe::Lib("libwebkit2gtk-4.1.so.0"),
         apt: "libwebkit2gtk-4.1-0",
+        brew: "",
         purpose: "GUI: window rendering",
     },
+    #[cfg(target_os = "linux")]
     Dep {
         name: "GTK 3",
         probe: Probe::Lib("libgtk-3.so.0"),
         apt: "libgtk-3-0",
+        brew: "",
         purpose: "GUI: window toolkit",
     },
 ];
@@ -366,6 +385,7 @@ fn present(probe: &Probe) -> bool {
         Probe::Bin(b) => std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).any(|d| d.join(b).is_file()))
             .unwrap_or(false),
+        #[cfg(target_os = "linux")]
         Probe::Lib(l) => std::process::Command::new("ldconfig")
             .arg("-p")
             .output()
@@ -380,7 +400,7 @@ fn check(install: bool) -> bool {
         return true;
     }
     if !install {
-        println!("\nInstall with: sudo apt install {}", missing.join(" "));
+        println!("\nInstall with: {} {}", installer().0, missing.join(" "));
         return false;
     }
     println!("\nInstalling: {}", missing.join(" "));
@@ -399,34 +419,43 @@ fn report() -> Vec<&'static str> {
         let ok = present(&d.probe);
         println!("[{}] {} ({})", if ok { "ok" } else { "MISSING" }, d.name, d.purpose);
         if !ok {
-            missing.push(d.apt);
+            missing.push(if cfg!(target_os = "macos") { d.brew } else { d.apt });
         }
     }
     missing
+}
+
+/// Package manager install command for this platform, as (display, program, args).
+fn installer() -> (&'static str, &'static str, &'static [&'static str]) {
+    if cfg!(target_os = "macos") {
+        ("brew install", "brew", &["install"])
+    } else {
+        ("sudo apt install", "apt-get", &["install", "-y"])
+    }
 }
 
 /// Install packages with apt-get. sudo (if needed) prompts on the terminal
 /// itself, so bobcat-cli never sees the sudo password.
 fn apt_install(pkgs: &[&str]) -> Result<(), String> {
     use std::process::Command;
-    if !present(&Probe::Bin("apt-get")) {
-        return Err("apt-get not found; install manually: ".to_string() + &pkgs.join(" "));
+    let (shown, prog, args) = installer();
+    if !present(&Probe::Bin(prog)) {
+        return Err(format!("{prog} not found; install manually: {shown} {}", pkgs.join(" ")));
     }
     let root = Command::new("id")
         .arg("-u")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
         .unwrap_or(false);
-    let mut cmd = if root {
-        Command::new("apt-get")
+    let mut cmd = if root || cfg!(target_os = "macos") {
+        Command::new(prog)
     } else {
         let mut c = Command::new("sudo");
-        c.arg("apt-get");
+        c.arg(prog);
         c
     };
     let status = cmd
-        .arg("install")
-        .arg("-y")
+        .args(args)
         .args(pkgs)
         .status()
         .map_err(|e| format!("failed to run installer: {e}"))?;
@@ -443,7 +472,7 @@ fn apt_install(pkgs: &[&str]) -> Result<(), String> {
 fn console_sol(ip: &str, user: &str, pass: &str) -> Result<(), String> {
     use std::process::Command;
     if !present(&Probe::Bin("ipmitool")) {
-        return Err("ipmitool not found (sudo apt install ipmitool, or bobcat-cli --check --install)".into());
+        return Err(format!("ipmitool not found (install it with `{} ipmitool`, or bobcat-cli --check --install)", installer().0));
     }
     install_signal_handlers();
     eprintln!("Connecting to the serial console of {ip}. Press ~. to disconnect, ~? for help.");
@@ -669,32 +698,94 @@ fn go(args: Args) -> Result<(), String> {
     let needs_login = !args.enable.is_empty()
         || !args.disable.is_empty()
         || matches!(args.console, Some(Console::Sol) | Some(Console::Ssh));
+    if args.forget {
+        let login = keychain::forget(&args.user, &args.ip)?;
+        let vnc = keychain::forget("", &args.ip)?;
+        println!(
+            "{}",
+            match (login, vnc) {
+                (true, true) => "Removed the saved login and VNC passwords.",
+                (true, false) => "Removed the saved login password.",
+                (false, true) => "Removed the saved VNC password.",
+                (false, false) => "No saved passwords.",
+            }
+        );
+        return Ok(());
+    }
+    let mut from_keychain = false;
     let pass = match args.pass.clone() {
         Some(p) => p,
-        None if needs_login => rpassword::prompt_password(format!("Password for {}@{}: ", args.user, args.ip))
-            .map_err(|e| e.to_string())?,
+        None if needs_login => match keychain::load(&args.user, &args.ip) {
+            Some(p) => {
+                from_keychain = true;
+                p
+            }
+            None => rpassword::prompt_password(format!("Password for {}@{}: ", args.user, args.ip))
+                .map_err(|e| e.to_string())?,
+        },
         None => String::new(),
     };
     if args.enable.is_empty() && args.disable.is_empty() && args.console.is_none() {
         println!("Target: {}@{}", args.user, args.ip);
         return Ok(());
     }
+    // VNC console: --vncpass / BOBCAT_VNC_PASS, then the keychain, then the prompt
+    // (but not before --enable vnc, which asks for the new VNC password itself)
+    let mut vnc_from_keychain = false;
+    let vncpass = match (args.console, args.vncpass.clone()) {
+        (Some(Console::Vnc), Some(p)) => p,
+        (Some(Console::Vnc), None) if args.enable.contains(&Feature::Vnc) => String::new(),
+        (Some(Console::Vnc), None) => match keychain::load("", &args.ip) {
+            Some(p) => {
+                vnc_from_keychain = true;
+                p
+            }
+            None => rpassword::prompt_password("VNC password: ").map_err(|e| e.to_string())?,
+        },
+        _ => String::new(),
+    };
+    act(&args, &pass, &vncpass).map_err(|e| {
+        if from_keychain || vnc_from_keychain {
+            format!("{e}\n(a password came from the keychain; --forget removes it, --save stores a new one)")
+        } else {
+            e
+        }
+    })?;
+    // Only a password that just worked is worth saving.
+    if args.save {
+        if needs_login && !from_keychain && !pass.is_empty() {
+            keychain::save(&args.user, &args.ip, &pass)?;
+            eprintln!("Saved the login password for {}@{} in the keychain.", args.user, args.ip);
+        }
+        if args.console == Some(Console::Vnc) && !vnc_from_keychain && !vncpass.is_empty() {
+            keychain::save("", &args.ip, &vncpass)?;
+            eprintln!("Saved the VNC password for {} in the keychain.", args.ip);
+        }
+    }
+    Ok(())
+}
+
+fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
     if args.enable.contains(&Feature::Html5) && args.enable.contains(&Feature::Java) {
         return Err("--enable html5 and --enable java select different consoles; pick one".into());
     }
     if !args.enable.is_empty() || !args.disable.is_empty() {
-        let sess = connect(&args.ip, &args.user, &pass, args.trust_new_hostkey)?;
-        configure(&sess, &args)?;
+        let sess = connect(&args.ip, &args.user, pass, args.trust_new_hostkey)?;
+        configure(&sess, args)?;
     }
     match args.console {
-        Some(Console::Sol) => console_sol(&args.ip, &args.user, &pass)?,
-        Some(Console::Ssh) => console_ssh(&args.ip, &args.user, &pass, args.trust_new_hostkey)?,
+        Some(Console::Sol) => console_sol(&args.ip, &args.user, pass)?,
+        Some(Console::Ssh) => console_ssh(&args.ip, &args.user, pass, args.trust_new_hostkey)?,
         Some(Console::Vnc) => {
-            let vncpass = match args.vncpass.clone() {
-                Some(p) => p,
-                None => rpassword::prompt_password("VNC password: ").map_err(|e| e.to_string())?,
+            // --enable vnc together with --console vnc and no --vncpass: ask now, after enabling
+            let prompted;
+            let vncpass = if vncpass.is_empty() {
+                prompted = rpassword::prompt_password("VNC password: ").map_err(|e| e.to_string())?;
+                prompted.as_str()
+            } else {
+                vncpass
             };
-            vnc_text::run(&args.ip, args.port, !args.notls, &vncpass, args.trust_new_hostkey, args.relearn)?
+            vnc_text::run(&args.ip, args.port, !args.notls, vncpass, args.trust_new_hostkey, args.relearn)?
         }
         None => {}
     }

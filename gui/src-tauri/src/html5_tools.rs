@@ -110,6 +110,7 @@ pub fn run_js_in(app: &AppHandle, label: &str, script: String) -> Result<String,
     rx.recv_timeout(Duration::from_secs(10)).map_err(|_| "the console page did not answer".to_string())?
 }
 
+#[cfg(target_os = "linux")]
 pub fn run_js_pub(app: &AppHandle, script: String) -> Result<String, String> {
     run_js(app, script)
 }

@@ -2,6 +2,51 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.2.7] - 2026-10-14
+### Added
+- `bobcat-cli`: `--save` now covers every console. With `--console vnc` the VNC password is saved in the keychain (service `bobcat-vnc`, account: the iDRAC IP, the entry bobcat-gui uses) after the session ends normally, and later runs read it before prompting. Lookup order for the VNC password: `--vncpass` / `BOBCAT_VNC_PASS`, then the keychain, then the prompt.
+- `--forget` removes both the login entry (for `--user`) and the VNC entry for the IP.
+- `--enable vnc` together with `--console vnc` and no `--vncpass`: the console still asks for the VNC password after enabling, and that one is not saved (pass `--vncpass` to save it).
+
+### Fixed
+- GUI on macOS: the HTML5 console opened as a blank white window. WebKit reads which `WKNavigationDelegate` methods exist once, when the delegate is set, so the pinned-certificate check added afterwards was never called and the iDRAC's certificate was rejected by default. The delegate is now set again after the method is added, and the window waits for that before its first navigation. With `BOBCAT_DEBUG` the window also logs the cookie and navigation steps.
+
+## [1.2.6] - 2026-10-14
+### Added
+- GUI: the **Remember** checkbox now also works in the VNC view. The VNC password goes in the OS keychain under the service `bobcat-vnc` (account: the iDRAC's IP), apart from the iDRAC login entries, and is saved once the iDRAC has accepted it. Filling, and deleting by unticking Remember and connecting, work as for the other protocols. `bobcat-cli` does not use the saved VNC password yet.
+
+## [1.2.5] - 2026-10-14
+### Changed
+- GUI: **Copy** now comes before **Paste** on the second toolbar row (one toolbar serves the VNC, HTML5, SSH and SOL views).
+
+## [1.2.4] - 2026-10-14
+### Changed
+- GUI: the **Copy text** button is now labelled **Copy** (it still reads "Cancel copy" while selecting).
+
+## [1.2.3] - 2026-10-14
+### Changed
+- The GUI no longer starts with a default user name: the user field is empty unless `BOBCAT_USER` is set. Example user names were removed from RESEARCH.md. No credentials are stored anywhere in the code or documents.
+
+## [1.2.2] - 2026-10-13
+### Added
+- GUI: **Remember** checkbox for the iDRAC password (SSH, SOL, HTML5), using the same OS keychain entries as `bobcat-cli` (service `bobcat`, account `user@ip`).
+  - The password is saved only after the login works: after SSH authentication, after the HTML5 login, or when ipmitool reports "SOL Session operational".
+  - Changing the IP or user, or switching protocol, fills the password from the keychain and ticks Remember. Unticking Remember and connecting deletes the saved entry. `BOBCAT_PASS` still wins. VNC is unaffected.
+### Fixed
+- The GUI crate builds on macOS again: the `BOBCAT_TEST_JS` / `BOBCAT_TEST_MAINJS` hooks (Linux-only code) are now gated by `cfg(target_os = "linux")`.
+
+## [1.2.1] - 2026-10-13
+### Added
+- `bobcat-cli`: iDRAC login passwords can be kept in the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) through the `keyring` crate, one entry per `user@ip` under the service name `bobcat`.
+  - `--save` stores the password after the command succeeded (never one that just failed, and never one that already came from the keychain).
+  - Lookup order for the iDRAC password: `--pass` / `BOBCAT_PASS`, then the keychain, then the prompt.
+  - `--forget` deletes the saved entry. If a keychain password is rejected, the error says where it came from and how to replace it.
+  - Only the iDRAC login (racadm, SOL, SSH console) is covered; the VNC password is unchanged. The GUI uses it too since 1.2.2.
+
+## [1.2.0] - 2026-10-13
+### Fixed
+- `--check` no longer reports WebKitGTK/GTK as missing on macOS: those probes (and the `ldconfig` lookup) are Linux-only. On macOS the install hint and `--check --install` use Homebrew (`brew install`, no sudo) instead of apt.
+
 ## [1.1.9] - 2026-10-13
 ### Added
 - GUI HTML5: Bobcat's own **Paste**, **Copy text** and **text size** controls work on the embedded console, and sit on the second toolbar row beside the Certificate button (the Keyboard button stays hidden in HTML5 mode).

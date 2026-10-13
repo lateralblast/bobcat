@@ -1,6 +1,6 @@
 [package]
 name = "bobcat-gui"
-version = "1.1.9"
+version = "1.2.7"
 edition = "2021"
 license = "CC-BY-NC-SA-4.0"
 
@@ -19,9 +19,16 @@ ssh2 = "0.9.6"
 portable-pty = "0.9.0"
 ctrlc = { version = "3.5.2", features = ["termination"] }
 flate2 = "1.1.10"
+keyring = "4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2", features = ["v2_6"] }
 gtk = "0.18"
 javascriptcore-rs = "1.1"
 cairo-rs = { version = "0.18", features = ["png"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+security-framework = "3"
+core-foundation = "0.10"

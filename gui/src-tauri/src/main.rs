@@ -4,6 +4,7 @@
 
 mod html5;
 mod html5_tools;
+mod keychain;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -371,7 +372,8 @@ fn to_rgba(f: &PixelFormat, px: &[u8]) -> Vec<u8> {
     out
 }
 
-fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
+fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bool, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
+    let real_ip = ip;
     let (ip, port) = if tls {
         status(app, "negotiating TLS (the iDRAC takes ~10-15s)...");
         ("127.0.0.1".to_string(), tls_forwarder(ip, port)?)
@@ -401,6 +403,11 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, cmds: &std::
         thread::sleep(Duration::from_millis(300)); // let the forwarder record why it quit
         FWD_ERR.lock().unwrap().take().unwrap_or_else(|| format!("vnc handshake: {e}"))
     })?;
+
+    // the iDRAC accepted the VNC password
+    if remember {
+        keychain::remember("", real_ip, pass);
+    }
 
     // Force a known 32-bit little-endian layout (bytes B,G,R,X). The iDRAC's
     // native 16-bit format gave wrong colours, so don't trust it.
@@ -585,7 +592,7 @@ fn emit_term(app: &AppHandle, bytes: &[u8]) {
 
 /// Text console through the iDRAC's SSH shell (`console com2`). Credentials are
 /// handled in-process by ssh2. NOTE: the SSH host key is not verified (ISSUES.md).
-fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, cols: u16, rows: u16, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
+fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, cols: u16, rows: u16, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
     let addr = (ip, 22)
         .to_socket_addrs()
         .map_err(|e| e.to_string())?
@@ -599,6 +606,9 @@ fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, cols: u16, rows: 
     check_hostkey(ip, &sess)?; // before the password is sent
     sess.userauth_password(user, pass)
         .map_err(|e| format!("authentication failed: {e}"))?;
+    if remember {
+        keychain::remember(user, ip, pass);
+    }
     let mut ch = sess.channel_session().map_err(|e| e.to_string())?;
     ch.request_pty("xterm-256color", None, Some((cols as u32, rows as u32, 0, 0)))
         .map_err(|e| e.to_string())?;
@@ -656,7 +666,7 @@ fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, cols: u16, rows: 
 /// Text console through IPMI Serial over LAN, by running `ipmitool sol activate`
 /// in a pseudo-terminal. The password goes in the child's environment, never
 /// on a command line.
-fn text_sol(app: &AppHandle, ip: &str, user: &str, pass: &str, cols: u16, rows: u16, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
+fn text_sol(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, cols: u16, rows: u16, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
     let size = |c, r| PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 };
     let pty = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
@@ -673,12 +683,21 @@ fn text_sol(app: &AppHandle, ip: &str, user: &str, pass: &str, cols: u16, rows: 
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let (app, done) = (app.clone(), done.clone());
+        let (ip, user, pass) = (ip.to_string(), user.to_string(), pass.to_string());
         thread::spawn(move || {
             let mut buf = vec![0u8; 8192];
+            let mut saved = !remember;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => emit_term(&app, &buf[..n]),
+                    Ok(n) => {
+                        // ipmitool says this once the iDRAC has accepted the login
+                        if !saved && String::from_utf8_lossy(&buf[..n]).contains("SOL Session operational") {
+                            keychain::remember(&user, &ip, &pass);
+                            saved = true;
+                        }
+                        emit_term(&app, &buf[..n]);
+                    }
                 }
             }
             done.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -730,7 +749,7 @@ fn text_sol(app: &AppHandle, ip: &str, user: &str, pass: &str, cols: u16, rows: 
 }
 
 #[tauri::command]
-fn connect_text(app: AppHandle, state: State<Session>, protocol: String, ip: String, user: String, pass: String, cols: u16, rows: u16) {
+fn connect_text(app: AppHandle, state: State<Session>, protocol: String, ip: String, user: String, pass: String, remember: bool, cols: u16, rows: u16) {
     disconnect(state.clone());
     wait_text_session(8); // let the previous session release the console first
     let (tx, rx) = channel();
@@ -741,8 +760,8 @@ fn connect_text(app: AppHandle, state: State<Session>, protocol: String, ip: Str
     let handle = thread::spawn(move || {
         status(&app, format!("connecting to {ip} ({protocol})..."));
         let r = match protocol.as_str() {
-            "sol" => text_sol(&app, &ip, &user, &pass, cols, rows, &rx),
-            _ => text_ssh(&app, &ip, &user, &pass, cols, rows, &rx),
+            "sol" => text_sol(&app, &ip, &user, &pass, remember, cols, rows, &rx),
+            _ => text_ssh(&app, &ip, &user, &pass, remember, cols, rows, &rx),
         };
         match r {
             Ok(()) => status(&app, "disconnected"),
@@ -785,13 +804,30 @@ fn default_protocol() -> String {
     std::env::var("BOBCAT_PROTOCOL").unwrap_or_else(|_| "vnc".into())
 }
 
+/// The password saved in the keychain for this user and iDRAC, if any.
 #[tauri::command]
-fn default_user() -> String {
-    std::env::var("BOBCAT_USER").unwrap_or_else(|_| "root".into())
+fn saved_password(user: String, ip: String) -> Option<String> {
+    keychain::load(&user, &ip)
 }
 
 #[tauri::command]
-fn connect(app: AppHandle, state: State<Session>, ip: String, port: u16, tls: bool, pass: String) {
+fn forget_password(user: String, ip: String) {
+    keychain::forget(&user, &ip);
+}
+
+/// Set BOBCAT_IP to start with that iDRAC address.
+#[tauri::command]
+fn default_ip() -> String {
+    std::env::var("BOBCAT_IP").unwrap_or_default()
+}
+
+#[tauri::command]
+fn default_user() -> String {
+    std::env::var("BOBCAT_USER").unwrap_or_default()
+}
+
+#[tauri::command]
+fn connect(app: AppHandle, state: State<Session>, ip: String, port: u16, tls: bool, pass: String, remember: bool) {
     if std::env::var("BOBCAT_DEBUG").is_ok() {
         eprintln!("[bobcat-gui] connect() called");
     }
@@ -804,7 +840,7 @@ fn connect(app: AppHandle, state: State<Session>, ip: String, port: u16, tls: bo
         const ATTEMPTS: u32 = 6;
         for attempt in 1..=ATTEMPTS {
             status(&app, format!("connecting to {ip}:{port}..."));
-            match run(&app, &ip, port, tls, &pass, &rx) {
+            match run(&app, &ip, port, tls, &pass, remember, &rx) {
                 Ok(()) => return status(&app, "disconnected"),
                 Err(e) => {
                     let retry = attempt < ATTEMPTS
@@ -974,7 +1010,7 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, default_protocol, default_user, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat-gui");
 }

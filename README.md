@@ -1,6 +1,6 @@
 # Bobcat
 
-Version: 1.1.9
+Version: 1.2.7
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -20,7 +20,7 @@ bobcat-cli --ip <iDRAC IP> --user <username> [--check [--install]]
 ```
 
 **Credentials** are kept off the command line where possible. Omit `--pass` to be prompted, or set `BOBCAT_PASS`
-(iDRAC password) / `BOBCAT_VNC_PASS` (VNC password). SSH is done in-process, so no credentials appear in any
+(iDRAC password) / `BOBCAT_VNC_PASS` (VNC password). Add `--save` to keep the iDRAC login password (`--console sol`/`ssh`, `--enable`/`--disable`) and the VNC password (`--console vnc`) in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service); later runs use them without prompting, and `--forget` removes both for that IP. SSH is done in-process, so no credentials appear in any
 process arguments (`--pass` and `--vncpass` do, if you use them).
 
 **Configure the iDRAC** (over SSH, using `racadm`):
@@ -54,7 +54,7 @@ use, saved in `~/.config/bobcat/known_certs.json`, shared with `bobcat-gui`) and
 change. `--trust-new-hostkey` accepts a changed key or certificate.
 
 **Packages.** `bobcat-cli --check` verifies that `ipmitool`, `tesseract` and the GUI's libraries are installed;
-add `--install` to install missing ones with apt (sudo prompts for its own password).
+add `--install` to install missing ones with apt (sudo prompts for its own password) or, on macOS, Homebrew.
 
 ## bobcat-gui
 
@@ -69,14 +69,14 @@ Requires the Tauri 2 Linux dependencies (WebKitGTK 4.1). No Node/npm needed. Ent
 Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (Dell's own web console in its own window), **SSH**
 (the iDRAC's `console com2`) or **SOL** (IPMI Serial over LAN via `ipmitool`). HTML5, SSH and SOL need the iDRAC username
 and password; SSH and SOL show a terminal.
-`BOBCAT_PROTOCOL=vnc|html5|ssh|sol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values.
+`BOBCAT_PROTOCOL=vnc|html5|ssh|sol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL and HTML5, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
 
 - **HTML5:** logs in to the iDRAC web interface (certificate checked against the pin first) and shows its HTML5
   console inside the main window, under the toolbar (a second web view; a small certificate window flashes up for
   about 3 seconds while the viewer sets itself up). Disconnect, closing the app, Ctrl+C or SIGTERM disconnect the
   viewer and log the session out. The HTML5 viewer must be selected on the iDRAC (`bobcat-cli --enable html5`).
-  The console is Dell's own page, so its keyboard, mouse and menus are Dell's. Bobcat's **Paste** (types your
-  clipboard in, US layout), **Copy text** (reads the screen with OCR; needs `tesseract-ocr`) and **text size**
+  The console is Dell's own page, so its keyboard, mouse and menus are Dell's. Bobcat's **Copy** (reads the
+  screen with OCR; needs `tesseract-ocr`), **Paste** (types your clipboard in, US layout) and **text size**
   (zoom) buttons work on it and sit on the second toolbar row beside Certificate; the on-screen keyboard is not used.
 - **VNC:** click the screen to send keyboard and mouse input (Ctrl+Alt+Del button provided). Compressed Zrle
   updates are requested; set `BOBCAT_ENCODING=raw` to force uncompressed Raw.

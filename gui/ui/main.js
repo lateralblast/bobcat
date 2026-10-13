@@ -22,26 +22,51 @@ const $ = (id) => document.getElementById(id);
 
 invoke('default_tls').then((t) => { $('tls').checked = t; });
 invoke('default_user').then((u) => { $('user').value = u; });
+invoke('default_ip').then((ip) => { if (ip) $('ip').value = ip; });
+// The password saved in the keychain for this IP: the iDRAC login (user + IP) for SSH, SOL
+// and HTML5, the VNC password (empty user) for VNC. savedFor remembers whose entry is
+// loaded so unticking Remember can delete it.
+let savedFor = null;
+async function fillSaved() {
+  const who = { user: $('proto').value === 'vnc' ? '' : $('user').value, ip: $('ip').value };
+  const pw = await invoke('saved_password', who);
+  if (pw && (!$('pass').value || savedFor)) {
+    $('pass').value = pw;
+    $('remember').checked = true;
+    savedFor = who;
+  } else if (!pw) {
+    if (savedFor) $('pass').value = ''; // it was the other protocol's saved password
+    savedFor = null;
+    $('remember').checked = false;
+  }
+}
+$('ip').onchange = $('user').onchange = () => { $('pass').value = ''; fillSaved(); };
+$('pass').oninput = () => { savedFor = null; };
+
 invoke('default_protocol').then(async (p) => {
   $('proto').value = p;
   setProto();
   const pw = await invoke('default_password', { protocol: p });
   if (pw) $('pass').value = pw;
+  await fillSaved();
   invoke('autoconnect').then((a) => { if (a) $('go').click(); });
 });
 
 $('go').onclick = () => {
   const proto = $('proto').value;
+  const remember = $('remember').checked;
+  // Remember was ticked off for a loaded entry: delete it
+  if (!remember && savedFor) { invoke('forget_password', savedFor); savedFor = null; }
   if (proto === 'html5') {
     reportLayout();
-    invoke('connect_html5', { ip: $('ip').value, user: $('user').value, pass: $('pass').value });
+    invoke('connect_html5', { ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember });
   } else if (proto === 'vnc') {
-    invoke('connect', { ip: $('ip').value, port: Number($('port').value), tls: $('tls').checked, pass: $('pass').value });
+    invoke('connect', { ip: $('ip').value, port: Number($('port').value), tls: $('tls').checked, pass: $('pass').value, remember });
   } else {
     ensureTerm();
     term.reset();
     fit.fit();
-    invoke('connect_text', { protocol: proto, ip: $('ip').value, user: $('user').value, pass: $('pass').value, cols: term.cols, rows: term.rows });
+    invoke('connect_text', { protocol: proto, ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember, cols: term.cols, rows: term.rows });
     term.focus();
   }
 };
@@ -206,7 +231,7 @@ function setCopyMode(on) {
   selStart = null;
   sel.style.display = 'none';
   cv.classList.toggle('copying', on);
-  $('copy').textContent = on ? 'Cancel copy' : 'Copy text';
+  $('copy').textContent = on ? 'Cancel copy' : 'Copy';
   if (on) $('status').textContent = 'drag over the text to copy (OCR); Esc cancels';
 }
 $('copy').onclick = async () => {
@@ -408,7 +433,7 @@ function setProto() {
   $('certbtn').textContent = proto === 'ssh' ? 'Host key' : 'Certificate';
   if (kind === 'text') { ensureTerm(); fit.fit(); }
   reportLayout();
-  invoke('default_password', { protocol: proto }).then((pw) => { if (pw) $('pass').value = pw; });
+  invoke('default_password', { protocol: proto }).then((pw) => { if (pw) $('pass').value = pw; else fillSaved(); });
 }
 $('proto').onchange = () => { invoke('disconnect'); invoke('disconnect_html5'); setProto(); };
 setProto();
