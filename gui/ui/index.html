@@ -46,18 +46,16 @@
 <body>
 <div id="bar">
   <div class="row">
-    <label>Protocol
-      <select id="proto">
-        <option value="vnc" selected>VNC</option>
-        <option value="html5">HTML5</option>
-        <option value="ssh">SSH</option>
-        <option value="sol">SOL</option>
-      </select>
-    </label>
-    <input id="ip" value="192.168.8.98" size="16" placeholder="iDRAC IP">
-    <input id="user" class="login-only" value="" size="10" placeholder="iDRAC user">
+    <select id="proto" aria-label="Protocol" title="Protocol">
+      <option value="vnc" selected>VNC</option>
+      <option value="html5">HTML5</option>
+      <option value="ssh">SSH</option>
+      <option value="sol">SOL</option>
+    </select>
+    <label>Host <input id="ip" value="192.168.8.98" size="16" placeholder="iDRAC IP"></label>
+    <label class="login-only">User <input id="user" value="" size="10" placeholder="iDRAC user"></label>
     <input id="port" class="vnc-only" value="5901" size="5">
-    <input id="pass" type="password" size="10" placeholder="VNC password">
+    <label>Pass <input id="pass" type="password" size="10" placeholder="VNC password"></label>
     <label title="Keep the password in the OS keychain (saved once the login works)"><input id="remember" type="checkbox"> Remember</label>
     <label class="vnc-only" title="Use when the iDRAC VNC SSL encryption is enabled"><input id="tls" type="checkbox"> TLS</label>
     <button id="go">Connect</button>

@@ -2,6 +2,14 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.3.5] - 2026-10-14
+### Changed
+- GUI: removed the "Protocol" label in front of the protocol drop-down (it keeps a tooltip and an accessible name).
+
+## [1.3.4] - 2026-10-14
+### Changed
+- GUI: the iDRAC address, user and password fields in the toolbar now have labels (Host, User, Pass). The User label hides with its field in the VNC view.
+
 ## [1.3.3] - 2026-10-14
 ### Changed
 - GUI on macOS: the small certificate window the HTML5 viewer opens to the console port (it only answers the viewer's ping and closes itself) is now created hidden instead of flashing on screen. Set `BOBCAT_SHOW_POPUP=1` to show it again, for example if the console no longer connects.
