@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.8.7
+// Version: 1.8.8
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -210,7 +210,7 @@ struct Args {
 
     /// Manage an Intel AMT (vPro) device instead of an iDRAC: --ip is the AMT address and --user
     /// its admin user (usually admin). With --amt: --info, --power, --enable vnc / --disable vnc
-    /// (the AMT KVM, an RFB server on 5900) and --console vnc (port 5900, no TLS) work
+    /// (the AMT KVM, an RFB server on 5900), --console vnc (port 5900, no TLS) and --console sol (Serial over LAN on 16994, no ipmitool) work
     #[arg(long)]
     amt: bool,
 
@@ -907,6 +907,74 @@ fn ssh_goodbye(sess: &Session, ch: &mut ssh2::Channel, send_quit: bool) {
     let _ = sess.disconnect(Some(ssh2::DisconnectCode::ByApplication), "bobcat-cli closing", None);
 }
 
+/// Intel AMT Serial over LAN through the redirection port (16994); ipmitool cannot talk to AMT's SOL.
+/// Press ~. (at the start of a line) or Ctrl+\\ to disconnect.
+fn console_amt_sol(ip: &str, user: &str, pass: &str) -> Result<(), String> {
+    install_signal_handlers();
+    let user = if user.is_empty() { "admin" } else { user };
+    let (writer, mut reader) = amt_redir::sol_open(ip, 16994, user, pass)?;
+    eprintln!("Connected to the AMT serial console of {ip}. Press ~. (at the start of a line) or Ctrl+\\ to disconnect.");
+    let raw = RawMode::enter()?;
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop2 = stop.clone();
+    let rx = thread::spawn(move || {
+        let mut out = std::io::stdout();
+        while !stop2.load(std::sync::atomic::Ordering::SeqCst) {
+            match reader.next() {
+                Ok(Some(d)) => {
+                    out.write_all(&d).ok();
+                    out.flush().ok();
+                }
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        }
+        stop2.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let mut buf = vec![0u8; 4096];
+    let (mut line_start, mut tilde) = (true, false);
+    'run: while !signaled() && !stop.load(std::sync::atomic::Ordering::SeqCst) {
+        let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+        // SAFETY: one valid pollfd for the duration of the call
+        let ready = unsafe { libc::poll(&mut fd, 1, 100) };
+        if ready > 0 && fd.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+            let n = std::io::stdin().read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            let mut send: Vec<u8> = Vec::new();
+            for &b in &buf[..n] {
+                if b == 0x1c {
+                    break 'run; // Ctrl+\\
+                }
+                if tilde {
+                    tilde = false;
+                    if b == b'.' {
+                        break 'run;
+                    }
+                    send.push(b'~');
+                }
+                if line_start && b == b'~' {
+                    tilde = true;
+                    line_start = false;
+                    continue;
+                }
+                line_start = b == b'\r' || b == b'\n';
+                send.push(b);
+            }
+            if writer.send(&send).is_err() {
+                break;
+            }
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    writer.close();
+    let _ = rx.join();
+    drop(raw);
+    eprintln!("\n[disconnected]");
+    Ok(())
+}
+
 /// Serial console through the iDRAC's SSH shell (`console com2`), with the
 /// credentials handled in-process by ssh2 (nothing on a command line).
 fn console_ssh(ip: &str, user: &str, pass: &str, trust_new: bool) -> Result<(), String> {
@@ -1104,8 +1172,9 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
         disconnect(&sess, &args.disconnect)?;
     }
     match args.console {
-        Some(Console::Sol) | Some(Console::Ssh) if args.amt => {
-            return Err("with --amt only --console vnc works (the AMT KVM); SOL needs the 16994 redirection protocol, which is not supported yet".into());
+        Some(Console::Sol) if args.amt => console_amt_sol(&args.ip, &args.user, pass)?,
+        Some(Console::Ssh) if args.amt => {
+            return Err("with --amt, --console works with vnc (the KVM) and sol (Serial over LAN); there is no SSH".into());
         }
         Some(Console::Sol) => console_sol(&args.ip, &args.user, pass)?,
         Some(Console::Ssh) => console_ssh(&args.ip, &args.user, pass, args.trust_new_hostkey)?,

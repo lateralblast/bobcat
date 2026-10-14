@@ -904,3 +904,165 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
     let down = down.join().map_err(|_| "bridge thread failed".to_string())?;
     up.and(down)
 }
+
+// ---- Serial over LAN ---------------------------------------------------------------------------
+// After the redirection login a "SOL " session is set up with a settings message (0x20), the device
+// answers (0x21) and the client says it is ready (0x27); then the device's serial output arrives in
+// 0x2A messages (10 byte header, length at offset 8, little endian) and keyboard input goes out in
+// 0x28 messages. Both sides send a keep-alive (0x2B) every few seconds. Worked out from
+// MeshCommander's CreateAmtRedirect (protocol 1); verified against a device by running it.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// The sending half of a SOL session (cloneable; a thread sends the keep-alives).
+#[derive(Clone)]
+pub struct SolWriter {
+    inner: Arc<Mutex<(TcpStream, u32)>>,
+    closed: Arc<AtomicBool>,
+}
+
+impl SolWriter {
+    fn frame(&self, head: u8, body: &[u8]) -> Result<(), String> {
+        let mut g = self.inner.lock().map_err(|_| "SOL session lock")?;
+        let mut m = vec![head, 0, 0, 0];
+        m.extend_from_slice(&g.1.to_le_bytes());
+        g.1 = g.1.wrapping_add(1);
+        m.extend_from_slice(body);
+        dump("->", &m);
+        g.0.write_all(&m).map_err(|e| e.to_string())
+    }
+
+    /// Send keyboard input (typed bytes) to the device's serial port.
+    pub fn send(&self, data: &[u8]) -> Result<(), String> {
+        for chunk in data.chunks(1000) {
+            let mut body = (chunk.len() as u16).to_le_bytes().to_vec();
+            body.extend_from_slice(chunk);
+            self.frame(0x28, &body)?;
+        }
+        Ok(())
+    }
+
+    /// End the session: the socket is shut down, which also ends the reader.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        if let Ok(g) = self.inner.lock() {
+            let _ = g.0.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// The receiving half: serial output from the device.
+pub struct SolReader {
+    s: TcpStream,
+    acc: Vec<u8>,
+}
+
+enum SolMsg {
+    Data(Vec<u8>),
+    Settings,
+    Other,
+}
+
+impl SolReader {
+    /// Cut one complete message off the front of what has been received.
+    fn parse(&mut self) -> Result<Option<SolMsg>, String> {
+        let a = &self.acc;
+        if a.is_empty() {
+            return Ok(None);
+        }
+        let (len, msg) = match a[0] {
+            0x21 => (23, SolMsg::Settings),
+            0x29 => (10, SolMsg::Other),
+            0x2B => (8, SolMsg::Other),
+            0xF0 => (1, SolMsg::Other), // the session is being recorded
+            0x2A => {
+                if a.len() < 10 {
+                    return Ok(None);
+                }
+                let n = u16::from_le_bytes([a[8], a[9]]) as usize;
+                if a.len() < 10 + n {
+                    return Ok(None);
+                }
+                (10 + n, SolMsg::Data(a[10..10 + n].to_vec()))
+            }
+            t => return Err(format!("the device sent an unknown SOL message (0x{t:02x})")),
+        };
+        if a.len() < len {
+            return Ok(None);
+        }
+        self.acc.drain(..len);
+        Ok(Some(msg))
+    }
+
+    /// The next block of serial output, or None after 0.3 s without one (so the caller can look at
+    /// its own stop flag). An error means the session has ended.
+    pub fn next(&mut self) -> Result<Option<Vec<u8>>, String> {
+        loop {
+            match self.parse()? {
+                Some(SolMsg::Data(d)) => return Ok(Some(d)),
+                Some(_) => continue,
+                None => {}
+            }
+            self.s.set_read_timeout(Some(Duration::from_millis(300))).ok();
+            let mut buf = [0u8; 4096];
+            match self.s.read(&mut buf) {
+                Ok(0) => return Err("the device closed the SOL session".into()),
+                Ok(n) => {
+                    dump("<-", &buf[..n]);
+                    self.acc.extend_from_slice(&buf[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => return Ok(None),
+                Err(e) => return Err(format!("the SOL session ended ({e})")),
+            }
+        }
+    }
+}
+
+/// Log in on the redirection port, start a SOL session and return its two halves.
+pub fn sol_open(ip: &str, port: u16, user: &str, pass: &str) -> Result<(SolWriter, SolReader), String> {
+    let mut s = open(ip, port, b"SOL ", user, pass)?;
+    // settings: max transmit buffer, transmit timeout, overflow timeout, receive timeout, flush timeout, heartbeat
+    let mut set = vec![0x20, 0, 0, 0];
+    set.extend_from_slice(&1u32.to_le_bytes());
+    for v in [10000u16, 100, 0, 10000, 100, 0] {
+        set.extend_from_slice(&v.to_le_bytes());
+    }
+    set.extend_from_slice(&[0, 0, 0, 0]);
+    send(&mut s, &set)?;
+    let mut reader = SolReader { s: s.try_clone().map_err(|e| e.to_string())?, acc: Vec::new() };
+    let started = std::time::Instant::now();
+    loop {
+        if started.elapsed() > Duration::from_secs(15) {
+            return Err("the device did not answer the SOL settings (is Serial over LAN enabled in AMT?)".into());
+        }
+        reader.s.set_read_timeout(Some(Duration::from_millis(300))).ok();
+        match reader.parse()? {
+            Some(SolMsg::Settings) => break,
+            Some(_) => continue,
+            None => {}
+        }
+        let mut buf = [0u8; 256];
+        match reader.s.read(&mut buf) {
+            Ok(0) => return Err("the device closed the connection after the SOL settings".into()),
+            Ok(n) => {
+                dump("<-", &buf[..n]);
+                reader.acc.extend_from_slice(&buf[..n]);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let w = SolWriter { inner: Arc::new(Mutex::new((s, 2))), closed: Arc::new(AtomicBool::new(false)) };
+    w.frame(0x27, &[0, 0, 0x1B, 0, 0, 0])?; // ready
+    let ka = w.clone();
+    thread::spawn(move || {
+        while !ka.closed.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_secs(2));
+            if ka.closed.load(Ordering::SeqCst) || ka.frame(0x2B, &[]).is_err() {
+                return;
+            }
+        }
+    });
+    Ok((w, reader))
+}

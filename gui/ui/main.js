@@ -30,7 +30,7 @@ let savedFor = null;
 async function fillSaved() {
   // only touch the keychain (which can prompt) while Remember is ticked
   if (!$('remember').checked) { savedFor = null; return; }
-  const who = { user: $('proto').value === 'vnc' ? '' : $('user').value || ($('proto').value === 'amt' ? 'admin' : ''), ip: $('ip').value };
+  const who = { user: $('proto').value === 'vnc' ? '' : $('user').value || ($('proto').value === 'amt' || $('proto').value === 'amtsol' ? 'admin' : ''), ip: $('ip').value };
   const pw = await invoke('saved_password', who);
   if (pw && (!$('pass').value || savedFor)) {
     $('pass').value = pw;
@@ -471,9 +471,9 @@ function setProto() {
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');
   $('javanote').classList.toggle('hidden', kind !== 'java');
-  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' ? 'AMT password' : 'iDRAC password';
+  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' || proto === 'amtsol' ? 'AMT password' : 'iDRAC password';
   // the Certificate button shows the TLS certificate (VNC, HTML5) or SSH host key; SOL has neither
-  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java' || proto === 'amt');
+  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java' || proto === 'amt' || proto === 'amtsol');
   $('certbtn').textContent = proto === 'ssh' ? 'Host key' : 'Certificate';
   if (kind === 'text') { ensureTerm(); fit.fit(); }
   reportLayout();

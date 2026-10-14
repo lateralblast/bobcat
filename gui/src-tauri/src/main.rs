@@ -545,7 +545,7 @@ fn trust_cert(kind: Option<String>) -> Result<(), String> {
 #[tauri::command]
 fn default_password(protocol: Option<String>) -> String {
     let var = match protocol.as_deref() {
-        Some("ssh") | Some("sol") | Some("html5") | Some("java") | Some("amt") => "BOBCAT_PASS",
+        Some("ssh") | Some("sol") | Some("html5") | Some("java") | Some("amt") | Some("amtsol") => "BOBCAT_PASS",
         _ => "BOBCAT_VNC_PASS",
     };
     std::env::var(var).unwrap_or_default()
@@ -673,6 +673,55 @@ fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, c
     Ok(())
 }
 
+/// Intel AMT Serial over LAN through the redirection port (ipmitool cannot talk to AMT's SOL).
+fn text_amtsol(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
+    let user = if user.is_empty() { "admin" } else { user };
+    let (writer, mut reader) = amt_redir::sol_open(ip, 16994, user, pass)?;
+    if remember {
+        keychain::remember(user, ip, pass);
+    }
+    status(app, format!("connected to the AMT serial console of {ip}"));
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let (app, done) = (app.clone(), done.clone());
+        thread::spawn(move || {
+            while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                match reader.next() {
+                    Ok(Some(d)) => emit_term(&app, &d),
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+            }
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+    let result = loop {
+        if done.load(std::sync::atomic::Ordering::SeqCst) {
+            break Ok(());
+        }
+        while let Ok(cmd) = cmds.try_recv() {
+            match cmd {
+                Cmd::Stop => {
+                    done.store(true, std::sync::atomic::Ordering::SeqCst);
+                    writer.close();
+                    return Ok(());
+                }
+                Cmd::Input(bytes) => {
+                    debug_bytes("term-input", &bytes);
+                    if writer.send(&bytes).is_err() {
+                        done.store(true, std::sync::atomic::Ordering::SeqCst);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    writer.close();
+    result
+}
+
 /// Text console through IPMI Serial over LAN, by running `ipmitool sol activate`
 /// in a pseudo-terminal. The password goes in the child's environment, never
 /// on a command line.
@@ -771,6 +820,7 @@ fn connect_text(app: AppHandle, state: State<Session>, protocol: String, ip: Str
         status(&app, format!("connecting to {ip} ({protocol})..."));
         let r = match protocol.as_str() {
             "sol" => text_sol(&app, &ip, &user, &pass, remember, cols, rows, &rx),
+            "amtsol" => text_amtsol(&app, &ip, &user, &pass, remember, &rx),
             _ => text_ssh(&app, &ip, &user, &pass, remember, cols, rows, &rx),
         };
         match r {

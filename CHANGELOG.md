@@ -2,6 +2,12 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.8.8] - 2026-10-15
+### Added
+- Intel AMT Serial over LAN, without ipmitool (AMT's SOL does not work with it, MeshCommander's does): `bobcat-cli --amt --console sol` and an "AMT SOL" entry in the GUI's protocol list (xterm.js, no port or certificate settings; user defaults to `admin`; Remember keeps the AMT password in the keychain). It uses the redirection port 16994: login, a SOL settings message, ready message, then output in 0x2A messages and input in 0x28 messages with a keep-alive every 2 s (`amt_redir.rs`: `sol_open`, `SolWriter`, `SolReader`; the protocol follows MeshCommander's `CreateAmtRedirect`, protocol 1). The CLI escape is `~.` at the start of a line or Ctrl+\\. Works on the 192.168.9.238 test device (SOL had to be enabled in AMT first; ipmitool does not work with it). With `BOBCAT_DEBUG=1` the protocol trace goes to the same terminal and disconnecting was awkward once; without it, it is fine.
+### Changed
+- `--amt --console ssh` is refused with a clearer message.
+
 ## [1.8.7] - 2026-10-14
 ### Added
 - GUI: an AMT protocol entry. Host, user (default `admin`) and AMT password; Connect logs in on the redirection port 16994, bridges the device's KVM to a local port (the same bridge as `bobcat-cli --amt --console vnc`, a copy of `amt_redir.rs`) and draws it in the VNC canvas, with keyboard, mouse, Paste, Copy and the on-screen keyboard. Remember keeps the AMT password in the keychain as `user@ip`; `BOBCAT_PROTOCOL=amt` and `BOBCAT_PASS` preselect. The VNC client now also accepts a server that offers no authentication. The bridge was checked on the 192.168.9.238 device with TigerVNC (live picture, input keeps the session up); the GUI's canvas stayed blank or black until the first-update fixes below; after them the GUI shows the whole picture cleanly and is fast in a release build (user's report). The device's own screen shows a flashing border while the session is open (AMT's remote session indicator).
