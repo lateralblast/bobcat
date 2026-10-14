@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.5.9
+Version: 1.8.5
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -20,6 +20,7 @@ bobcat-cli --ip <iDRAC IP> --user <username> [--check [--install]]
            [--console sol|ssh|vnc [--tls|--notls] [--relearn]]
            [--enable vnc|html5|java|sol [--port 5901] [--sslebl Disabled] [--timeout 300]] [--disable vnc]
            [--disconnect list|media|iso|gui|vc|ssh|sol|sessions|all]
+           [--amt [--amt-port 16992] [--info] [--power status|on|off|off-hard|cycle|reset|sleep|hibernate|nmi [--yes]]]
 ```
 
 **Credentials** are kept off the command line where possible. Omit `--pass` to be prompted, or set `BOBCAT_PASS`
@@ -46,6 +47,17 @@ process arguments (`--pass` and `--vncpass` do, if you use them).
 | `--disconnect sol` | Closes the sessions the iDRAC lists as `SOL`: Serial over LAN (`--console sol`) and the serial console opened over SSH (`--console ssh`, `console com2`); the iDRAC lists both the same way. |
 | `--disconnect sessions` | Closes every other iDRAC session (web, virtual console, virtual media) with `racadm closessn -a`. |
 | `--disconnect all` | Both, media first. |
+
+**Intel AMT (vPro)** (over WS-Management, HTTP digest on port 16992; add `--amt`, `--ip` is the AMT address and `--user` its admin user, usually `admin`):
+
+| Option | Effect |
+|---|---|
+| `--amt` (or `--amt --info`) | Shows what the device reports: firmware, host name, provisioning, power state, redirection (SOL/IDER) and KVM state. |
+| `--amt --power status\|on\|off\|off-hard\|cycle\|reset\|sleep\|hibernate\|nmi` | Shows or changes the power state. Everything but `on` and `status` asks you to type `yes` first (`--yes` skips it). Only the states the device offers in its current power state are accepted. |
+| `--amt --enable vnc` | Turns on the AMT KVM: sets the RFB password (`--vncpass`, `BOBCAT_VNC_PASS` or the prompt; exactly 8 characters with upper case, lower case, a digit and a special character), opens VNC on port 5900 and enables the KVM service. `--disable vnc` turns it off. |
+| `--amt --console vnc` | The text conversion of the AMT KVM screen (port 5900, no TLS unless `--tls`). |
+
+TLS (16993) and SOL/IDER (the 16994 redirection protocol) are not supported yet.
 
 **Consoles:**
 

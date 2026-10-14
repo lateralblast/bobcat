@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.5.9
+// Version: 1.8.5
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -8,6 +8,8 @@ use std::net::TcpStream;
 use std::process::ExitCode;
 use std::time::Duration;
 
+mod amt;
+mod amt_redir;
 mod keychain;
 mod screen_text;
 mod vnc_text;
@@ -60,6 +62,46 @@ impl Disconnect {
             Disconnect::Ssh => Some("SSH"),
             Disconnect::Sol => Some("SOL"),
             _ => None,
+        }
+    }
+}
+
+/// Power actions for an Intel AMT device (`--amt --power`)
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Power {
+    /// Show the power state
+    Status,
+    /// Power on
+    On,
+    /// Soft power off
+    Off,
+    /// Hard power off
+    OffHard,
+    /// Power cycle
+    Cycle,
+    /// Reset
+    Reset,
+    /// Sleep (deep)
+    Sleep,
+    /// Hibernate
+    Hibernate,
+    /// Send a non-maskable interrupt (diagnostic)
+    Nmi,
+}
+
+impl Power {
+    /// AMT's CIM_PowerManagementService number for the action.
+    fn amt_state(self) -> Option<u32> {
+        match self {
+            Power::Status => None,
+            Power::On => Some(2),
+            Power::Sleep => Some(4),
+            Power::Cycle => Some(5),
+            Power::OffHard => Some(6),
+            Power::Hibernate => Some(7),
+            Power::Off => Some(8),
+            Power::Reset => Some(10),
+            Power::Nmi => Some(11),
         }
     }
 }
@@ -118,8 +160,8 @@ struct Args {
     #[arg(long, required_unless_present = "check", default_value = "")]
     user: String,
 
-    /// iDRAC password (prefer the BOBCAT_PASS environment variable or the
-    /// interactive prompt: command-line arguments are visible in `ps`)
+    /// iDRAC password, or with --amt the AMT admin password (prefer the BOBCAT_PASS environment
+    /// variable or the interactive prompt: command-line arguments are visible in `ps`)
     #[arg(long = "pass", env = "BOBCAT_PASS", hide_env_values = true)]
     pass: Option<String>,
 
@@ -132,8 +174,9 @@ struct Args {
     #[arg(long)]
     forget: bool,
 
-    /// VNC password to set with --enable vnc (visible in `ps`; prefer the
-    /// BOBCAT_VNC_PASS environment variable or the interactive prompt)
+    /// VNC password to set with --enable vnc, or with --amt the AMT KVM's RFB password (exactly 8
+    /// characters: upper, lower, digit, special); visible in `ps`, so prefer the BOBCAT_VNC_PASS
+    /// environment variable or the interactive prompt
     #[arg(long, env = "BOBCAT_VNC_PASS", hide_env_values = true)]
     vncpass: Option<String>,
 
@@ -164,6 +207,38 @@ struct Args {
     /// With --console vnc, forget the saved character table for this iDRAC and learn it again
     #[arg(long)]
     relearn: bool,
+
+    /// Manage an Intel AMT (vPro) device instead of an iDRAC: --ip is the AMT address and --user
+    /// its admin user (usually admin). With --amt: --info, --power, --enable vnc / --disable vnc
+    /// (the AMT KVM, an RFB server on 5900) and --console vnc (port 5900, no TLS) work
+    #[arg(long)]
+    amt: bool,
+
+    /// With --amt, the AMT web-services port (16992 is plain HTTP; TLS on 16993 is not supported yet)
+    #[arg(long, default_value_t = 16992)]
+    amt_port: u16,
+
+    /// With --amt, show what the device reports (firmware, power, provisioning, KVM, redirection)
+    #[arg(long, requires = "amt")]
+    info: bool,
+
+    /// With --amt, show or change the power state
+    #[arg(long, value_enum, requires = "amt")]
+    power: Option<Power>,
+
+    /// With --amt, try several shapes of the KVM settings Put and print the device's answer to each
+    /// (changes the RFB password; for finding what a firmware accepts)
+    #[arg(long, requires = "amt", hide = true)]
+    amt_diagnose_kvm: bool,
+
+    /// With --amt, open an AMT redirection session (SOL, IDER or KVMR) on port 16994, authenticate and
+    /// show what the device sends next (for checking the redirection protocol)
+    #[arg(long, requires = "amt", hide = true, value_name = "SOL|IDER|KVMR|BRIDGE")]
+    amt_redir_test: Option<String>,
+
+    /// Do not ask before a power change
+    #[arg(long, requires = "power")]
+    yes: bool,
 
     /// Open a text console to the server (sol needs ipmitool)
     #[arg(long, value_enum)]
@@ -851,7 +926,8 @@ fn go(args: Args) -> Result<(), String> {
     }
     // The iDRAC login is only needed for racadm over SSH, SOL and the SSH console;
     // --console vnc uses the VNC password instead.
-    let needs_login = !args.enable.is_empty()
+    let needs_login = args.amt
+        || !args.enable.is_empty()
         || !args.disable.is_empty()
         || !args.disconnect.is_empty()
         || matches!(args.console, Some(Console::Sol) | Some(Console::Ssh));
@@ -882,7 +958,7 @@ fn go(args: Args) -> Result<(), String> {
         },
         None => String::new(),
     };
-    if args.enable.is_empty() && args.disable.is_empty() && args.disconnect.is_empty() && args.console.is_none() {
+    if !args.amt && args.enable.is_empty() && args.disable.is_empty() && args.disconnect.is_empty() && args.console.is_none() {
         println!("Target: {}@{}", args.user, args.ip);
         return Ok(());
     }
@@ -891,7 +967,7 @@ fn go(args: Args) -> Result<(), String> {
     let mut vnc_from_keychain = false;
     let vncpass = match (args.console, args.vncpass.clone()) {
         (Some(Console::Vnc), Some(p)) => p,
-        (Some(Console::Vnc), None) if args.enable.contains(&Feature::Vnc) => String::new(),
+        (Some(Console::Vnc), None) if args.enable.contains(&Feature::Vnc) || args.amt => String::new(),
         (Some(Console::Vnc), None) => match keychain::load("", &args.ip) {
             Some(p) => {
                 vnc_from_keychain = true;
@@ -926,24 +1002,43 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
     if args.enable.contains(&Feature::Html5) && args.enable.contains(&Feature::Java) {
         return Err("--enable html5 and --enable java select different consoles; pick one".into());
     }
-    if !args.enable.is_empty() || !args.disable.is_empty() || !args.disconnect.is_empty() {
+    let mut amt_rfb: Option<String> = None;
+    if args.amt {
+        amt_rfb = amt_act(args, pass)?;
+    } else if !args.enable.is_empty() || !args.disable.is_empty() || !args.disconnect.is_empty() {
         let sess = connect(&args.ip, &args.user, pass, args.trust_new_hostkey)?;
         configure(&sess, args)?;
         disconnect(&sess, &args.disconnect)?;
     }
     match args.console {
+        Some(Console::Sol) | Some(Console::Ssh) if args.amt => {
+            return Err("with --amt only --console vnc works (the AMT KVM); SOL needs the 16994 redirection protocol, which is not supported yet".into());
+        }
         Some(Console::Sol) => console_sol(&args.ip, &args.user, pass)?,
         Some(Console::Ssh) => console_ssh(&args.ip, &args.user, pass, args.trust_new_hostkey)?,
         Some(Console::Vnc) => {
             // --enable vnc together with --console vnc and no --vncpass: ask now, after enabling
             let prompted;
-            let vncpass = if vncpass.is_empty() {
+            let vncpass = if let Some(p) = amt_rfb.as_deref().filter(|_| vncpass.is_empty()) {
+                p
+            } else if vncpass.is_empty() && args.amt {
+                "" // the bridged AMT KVM needs no VNC password
+            } else if vncpass.is_empty() {
                 prompted = rpassword::prompt_password("VNC password: ").map_err(|e| e.to_string())?;
                 prompted.as_str()
             } else {
                 vncpass
             };
-            vnc_text::run(&args.ip, args.port, !args.notls, vncpass, args.trust_new_hostkey, args.relearn)?
+            // the AMT KVM is reached through the redirection port 16994 and bridged to a local port
+            // (the device's own 5900 port could not be enabled on the test device); no VNC password
+            let (host, port, tls) = if args.amt {
+                let local = amt_redir::kvm_bridge(&args.ip, 16994, &args.user, pass)?;
+                println!("AMT KVM bridged to 127.0.0.1:{local}");
+                ("127.0.0.1".to_string(), local, false)
+            } else {
+                (args.ip.clone(), args.port, !args.notls)
+            };
+            vnc_text::run(&host, port, tls, vncpass, args.trust_new_hostkey, args.relearn)?
         }
         None => {}
     }
@@ -1026,6 +1121,100 @@ fn disconnect(sess: &Session, what: &[Disconnect]) -> Result<(), String> {
         run_show(sess, "racadm closessn -a");
     }
     Ok(())
+}
+
+/// Everything `--amt` asks for. Returns the RFB password it set, if any (for `--console vnc`).
+fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
+    if !args.disconnect.is_empty() {
+        return Err("--disconnect is for iDRAC sessions, not --amt".into());
+    }
+    if args.enable.iter().chain(&args.disable).any(|f| *f != Feature::Vnc) {
+        return Err("with --amt only --enable vnc / --disable vnc apply (the AMT KVM)".into());
+    }
+    let device = amt::Amt::new(&args.ip, args.amt_port, &args.user, pass);
+    let nothing = !args.info && !args.amt_diagnose_kvm && args.amt_redir_test.is_none() && args.power.is_none() && args.enable.is_empty() && args.disable.is_empty() && args.console.is_none();
+    if args.info || nothing {
+        device.info()?;
+    }
+    if let Some(p) = args.power {
+        match p.amt_state() {
+            None => println!("power: {}", amt::power_name(device.power_state()?)),
+            Some(state) => {
+                if p != Power::On && !args.yes {
+                    let name = p.to_possible_value().map(|v| v.get_name().to_string()).unwrap_or_default();
+                    let ans = rpassword::prompt_password(format!("Really send power action `{name}` to {}? Type yes: ", args.ip)).map_err(|e| e.to_string())?;
+                    if ans.trim() != "yes" {
+                        return Err("stopped".into());
+                    }
+                }
+                device.set_power(state)?;
+                println!("power change requested (state {state}); the device is now {}", amt::power_name(device.power_state()?));
+            }
+        }
+    }
+    if let Some(p) = &args.amt_redir_test {
+        if p.eq_ignore_ascii_case("bridge") {
+            // the KVM bridge on its own, for any VNC viewer
+            let local = amt_redir::kvm_bridge(&args.ip, 16994, &args.user, pass)?;
+            println!("AMT KVM bridged to 127.0.0.1:{local}: connect a VNC viewer there (Ctrl+C stops)");
+            loop {
+                thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        let proto: &[u8; 4] = match p.to_ascii_uppercase().as_str() {
+            "SOL" => b"SOL ",
+            "IDER" => b"IDER",
+            "KVMR" | "KVM" => b"KVMR",
+            _ => return Err("--amt-redir-test takes SOL, IDER, KVMR or BRIDGE".into()),
+        };
+        amt_redir::test(&args.ip, 16994, proto, &args.user, pass)?;
+        return Ok(None);
+    }
+    if args.amt_diagnose_kvm {
+        let pw = match args.vncpass.clone() {
+            Some(p) => p,
+            None => rpassword::prompt_password("RFB password to try (8 characters: upper, lower, digit, special): ").map_err(|e| e.to_string())?,
+        };
+        amt::check_rfb_password(&pw)?;
+        device.kvm_diagnose(&pw)?;
+        return Ok(None);
+    }
+    let mut rfb = None;
+    if args.enable.contains(&Feature::Vnc) {
+        let pw = match args.vncpass.clone() {
+            Some(p) => {
+                amt::check_rfb_password(&p)?;
+                p
+            }
+            None => {
+                // typed without echo, so ask twice and say what is wrong; three tries
+                println!("The AMT KVM (VNC) needs its own password, not the admin one: exactly 8 characters with an upper-case letter, a lower-case letter, a digit and a special character.");
+                let mut chosen = None;
+                for _ in 0..3 {
+                    let p = rpassword::prompt_password("New VNC (RFB) password: ").map_err(|e| e.to_string())?;
+                    if let Err(e) = amt::check_rfb_password(&p) {
+                        println!("{e}");
+                        continue;
+                    }
+                    if rpassword::prompt_password("Repeat it: ").map_err(|e| e.to_string())? != p {
+                        println!("the two entries differ");
+                        continue;
+                    }
+                    chosen = Some(p);
+                    break;
+                }
+                chosen.ok_or("no valid VNC password entered")?
+            }
+        };
+        device.kvm_enable(&pw)?;
+        println!("[changed] AMT KVM enabled: VNC on {}:5900 with the new password", args.ip);
+        rfb = Some(pw);
+    }
+    if args.disable.contains(&Feature::Vnc) {
+        device.kvm_disable()?;
+        println!("[changed] AMT KVM disabled (port 5900 off)");
+    }
+    Ok(rfb)
 }
 
 fn configure(sess: &Session, args: &Args) -> Result<(), String> {

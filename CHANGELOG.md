@@ -2,6 +2,120 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.8.5] - 2026-10-14
+### Fixed
+- AMT KVM bridge: the first compressed RLE tile of a session starts with a zlib header (`78 9c`), then an ordinary raw-deflate stream (seen on the real device: `78 9c 00 03 00 fc ff 01 00 00` = header, stored block of 3 bytes, solid tile colour 0x0000). The header is now skipped once, at the start of the stream; before, the decoder stopped with `bad deflate data` on the first tile. Checked against the mock with a zlib header on its first compressed chunk. The failing tile also showed what the device sees: a solid black tile at 800x600.
+### Notes
+- Not yet seen on the real device after the fix; if the screen is really black (the host display asleep or no video source), the picture will still be black.
+
+## [1.8.4] - 2026-10-14
+### Changed
+- AMT KVM bridge on the real device with the RLE encodings requested: the device sends the Bell, a type 3 message (its `\0Kvm...` data-channel message, which the bridge keeps from the viewer) and then the first update, whose first rectangle is a 64x64 tile with encoding 16; after that the trace went quiet. The bridge now traces the first RLE tiles (length, stored or deflated, first bytes, decoded size, tile type), reads a tile with a 10 s timeout so a stall is reported, adds the failing tile's details to a decode error, and prints any error that stops the device side (`device side stopped: ...`).
+
+## [1.8.3] - 2026-10-14
+### Added
+- AMT KVM bridge: Intel RLE (encoding 16) and desktop-size support, written from MeshCommander's decoder. Why: with Raw only (and 8-bit colour for large screens) the real device kept sending black at 800x600 while MeshCommander gets a picture from the same device. The bridge now asks for MeshCommander's encodings (16, 0, 1092, -223; `BOBCAT_AMT_ENC=0` goes back to Raw only) and decodes: the 32-bit length, the uncompressed block (5-byte header) or deflate data from one continuing raw-deflate stream (new `flate2` dependency), and the tile sub-encodings 0 raw, 1 solid, 2-16 packed palette, 128 run-length, >129 palette run-length. A desktop-size rectangle (-223) resizes a viewer that asked for it (and triggers a full refresh); a viewer that cannot is disconnected with a message. The viewer always receives Raw rectangles.
+### Notes
+- Checked against a mock that sends all three RLE shapes (stored block, deflated packed palette, deflated run-length continuing the same stream) and a desktop 8x2; the colours reach a 32-bit viewer correctly. Not yet against the real device.
+
+## [1.8.2] - 2026-10-14
+### Changed
+- AMT KVM bridge, following MeshCommander's source (`default.htm` of the `meshcommander` npm package, which the user got working against the same device): the device cannot handle a display buffer over 9 216 000 bytes (bytes per pixel x width x height), so the 3840x2160 screen (16.6 MB at 16 bit) got the Bell and then silence. Screens over the limit are now switched to 8-bit RGB332 with a SetPixelFormat to the device (`BOBCAT_AMT_BPP=1` forces it) and converted for the viewer; the shared-desktop flag sent to the device is always 1 (MeshCommander's value; the viewer's own flag is not passed on); a `\0KvmDataChannel\0` ClientCutText keep-alive is sent every 5 s like MeshCommander does; the KVM data-channel messages the device sends back (ServerCutText starting with `\0Kvm`) are not shown to the viewer as clipboard text. Checked against the mock (ClientInit 1, SetPixelFormat 8-bit, 8-bit colours converted correctly); not yet against the real device.
+- Not done: MeshCommander also asks for encoding 16 (Intel's RLE with zlib), 1092 and the desktop-size pseudo-encoding (-223); the bridge asks for Raw only. Raw tiles are at most 64x64, so a full 4K frame at 8 bit is 8.3 MB.
+
+## [1.8.1] - 2026-10-14
+### Changed
+- AMT KVM bridge, 3840x2160 screen: with Raw only (`BOBCAT_AMT_ENC` unset) and with `BOBCAT_AMT_ENC=16,0` the device answers the viewer's full-screen update request with a Bell (`02`) at ~160 ms and then nothing that was seen. The bridge now prints `nothing from the device yet` every 5 s while it waits (so the time covered by a log is visible), and `BOBCAT_AMT_POLL=<seconds>` re-sends a full-screen non-incremental update request from the bridge at that interval.
+
+## [1.8.0] - 2026-10-14
+### Changed
+- AMT KVM bridge, after rebooting the test machine: the device now reports a 3840x2160 screen (before the reboot a black 800x600), answers the viewer's update request with a Bell and, within the time watched, no screen update (at 800x600 the update followed 2 ms later). A 4K Raw frame is 16 MB; the device may only send its compressed encodings at that size. `BOBCAT_AMT_ENC=16,0` (a comma list) chooses which encodings the bridge asks the device for, and a rectangle with an encoding other than Raw is now reported with its first bytes (`[bridge] rect ... with encoding N; next bytes: ...`) so the format can be worked out.
+
+## [1.7.9] - 2026-10-14
+### Changed
+- AMT KVM bridge: the screen saved from the real device (`BOBCAT_AMT_DUMP`) is entirely black (0 of 1 440 000 colour bytes non-zero), so the blank viewer was right: the device sends a black 800x600 picture (display off, asleep or an unplugged-monitor fallback), not a conversion fault. `BOBCAT_AMT_WAKE=1` makes the bridge press and release Shift on the device at 2, 4 and 6 s (KeyEvent messages) to see whether a key wakes the display; pointer events are what made the device drop the connection. Result on the device: the wake test ended the same way (the connection closed after the first key press, screen still black), so any input ends the session, probably because the machine has no active video for AMT to capture.
+
+## [1.7.8] - 2026-10-14
+### Changed
+- AMT KVM bridge, third real-device run. With pointer events the device closed the connection about 2.3 s after the first screen (the last message through was a pointer move); with `tigervnc -ViewOnly` it stayed up: after the first full screen (Bell, then 130 Raw tiles at 171 ms) the device sends a one-rectangle 20-byte update every ~10 s and the viewer shows a blank screen. So the pointer events as the viewer sends them are what the device cannot take, and the blank screen is either the machine's display being off or a conversion problem.
+- `BOBCAT_AMT_DUMP=<file.ppm>` keeps a copy of the device's screen in the bridge and writes it after every update (with how many colour bytes are not black), to see the real picture without a viewer.
+
+## [1.7.7] - 2026-10-14
+### Changed
+- AMT KVM bridge: second real-device run. The device's first update is 130 Raw rectangles of 64x64 tiles (edge tiles 32 wide / 24 high), 800x600 in all, all inside the screen; TigerVNC then ended the stream (3 s later) while the bridge's `Broken pipe` was the write of a viewer message **to the device**, i.e. the device closes the KVM connection after the first update when it gets the viewer's following messages. With `BOBCAT_DEBUG=1` the bridge now traces each message in both directions with a millisecond timestamp (first 40 each way) to show which one the device cannot take.
+
+## [1.7.6] - 2026-10-14
+### Changed
+- AMT KVM bridge, first real-device run of the translating version: the device sent its first screen (one update of 130 Raw rectangles, 1 921 564 bytes after conversion = 800x600x4 plus headers) and TigerVNC showed its "Press F8" tip, then the viewer dropped the connection (the bridge saw `Broken pipe` writing the update). With `BOBCAT_DEBUG=1` the bridge now logs the first rectangles of each update and warns about any that lie outside the screen.
+
+## [1.7.5] - 2026-10-14
+### Changed
+- AMT KVM bridge now translates instead of passing the stream through. The real device's trace (via TigerVNC) showed: ServerInit 800x600 with a 16-bit RGB565 pixel format and the name `Intel(r) AMT KVM`; TigerVNC then sent SetPixelFormat (32-bit) and SetEncodings (22 encodings) and the device answered one byte `02` and reset the connection. The bridge now forwards ClientInit, reads ServerInit itself, asks the device for the Raw encoding only (`02 00 00 01 00 00 00 00`), swallows the viewer's SetPixelFormat (remembering the format it wants) and SetEncodings, passes key, pointer, update-request and cut-text messages through, and converts every Raw rectangle from the device's format to the viewer's (any true-colour 8/16/32-bit format). Checked against a mock device with a 32-bit viewer (colours come out right); not yet against the real device.
+- Known limits: only Raw (uncompressed, about 1 MB for a full 800x600 frame); the device's own compression (ZRLE, encoding 16) is not used or decoded.
+
+## [1.7.4] - 2026-10-14
+### Changed
+- AMT KVM bridge: with `BOBCAT_DEBUG=1` it traces the first 12 chunks in each direction (`device -> viewer`, `viewer -> device`) and says who closed the connection. First real-device result: TigerVNC passed the opening (RFB 3.8, security type None) and then got "End of stream" right after ClientInit.
+
+## [1.7.3] - 2026-10-14
+### Changed
+- AMT KVM bridge follows the sequence seen on the real device: KVM start `40 00 00 00 00 00 00 00` -> `41 00 00 00 00 00 00 00` + `RFB 004.000\n`; our `RFB 003.008\n` -> security types `02 01 80` (None and an Intel type); we pick 1 -> SecurityResult. The viewer is given an ordinary RFB 3.8 opening (version, one type "None", result OK) and then joined to the device, which waits for ClientInit; so ClientInit, ServerInit and the picture flow straight through. Worked end to end against a mock device with a plain RFB client.
+- Hidden `--amt --amt-redir-test BRIDGE` runs only the bridge and prints `AMT KVM bridged to 127.0.0.1:<port>` so any VNC viewer can connect to it.
+### Notes
+- The opening sequence is from the real device's traces; the picture itself (encodings the device chooses, whether bobcat's VNC reader decodes them) has not been seen yet.
+
+## [1.7.2] - 2026-10-14
+### Changed
+- `--amt --amt-redir-test KVMR` second run on the device: after login it is silent for 3 s; sending `RFB 003.008\n` made it answer `41 00 00 00 00 00 00 01` (8 bytes), which looks like the reply to a KVM start message. The test now sends the KVM start message `40 00 00 00 00 00 00 00` (my recollection of the protocol; override with `BOBCAT_REDIR_SEND=<hex>`), shows the answer, answers an RFB version line with 3.8 if one arrives and shows what follows; every step is printed.
+
+## [1.7.1] - 2026-10-14
+### Changed
+- `--amt --amt-redir-test` first run on the real device (AMT 14.1.79): StartRedirectionSession (`KVMR`), the authentication query (the device offers only digest, type 4) and the digest exchange all work as implemented; the final reply is `14 00 00 00 04 00 00 00 00` (authenticated). After login the device sent nothing for 5 s, so for the KVM the client has to speak first. The test now waits 3 s, then sends `RFB 003.008\n` (or the hex in `BOBCAT_REDIR_SEND`) and shows the answer.
+
+## [1.7.0] - 2026-10-14
+### Added
+- Intel AMT redirection client (new `src/amt_redir.rs`, TCP 16994): `StartRedirectionSession` (`SOL `, `IDER`, `KVMR`), the authentication query and digest `AuthenticateSession` exchange (realm, nonce, qop from the device; MD5 response over `/RedirectionService`), with a hex trace of every message under `BOBCAT_DEBUG=1`. Hidden `--amt --amt-redir-test SOL|IDER|KVMR` opens a session and shows the first bytes the device sends.
+- `bobcat-cli --amt --console vnc` now reaches the KVM through that channel instead of port 5900: the session is opened and authenticated, the device's RFB version line is answered as 3.8, and the stream is bridged to a local port (`AMT KVM bridged to 127.0.0.1:<port>`) that the existing VNC text console connects to without a VNC password. Reason: the test device (AMT 14.1.79) refuses to enable its own VNC port (RESEARCH.md).
+### Notes
+- Written from Intel's protocol documentation as I remember it; checked only against a mock that follows the same description (handshake, digest check, wrong password), not yet against a real device. Expect fixes after the first run: the message layouts, the RFB version dance and the encodings the device sends are the likely places. SOL and IDER are only opened by the test option; no console yet.
+
+## [1.6.7] - 2026-10-14
+### Changed
+- `--amt-diagnose-kvm` now tests changes to the KVM settings (a harmless `SessionTimeout` change, flipping `OptInPolicy`, the password and the port with and without it) and puts `OptInPolicy` and `SessionTimeout` back. Findings from the first run on the AMT 14.1.79 device: an unchanged Put is accepted; any change to `RFBPassword` or `Is5900PortEnabled` answers `UnsupportedFeature` (also the port alone, so it is not about the password); sets without `ElementName`, `InstanceID`, `OptInPolicy` or `RFBPassword` fail schema validation (the schema needs at least those four).
+
+## [1.6.6] - 2026-10-14
+### Added
+- Hidden `bobcat-cli --amt --amt-diagnose-kvm [--vncpass]`: tries 15 shapes of the KVM settings Put (all properties, without the capability flags, minimal sets, one property left out at a time, password only, port only) and prints the device's answer to each. For finding what a firmware accepts: on the real AMT 14.1.79 device even a password-only Put with all properties answered `UnsupportedFeature`. The accepted ones really change the settings (RFB password; port 5900 in the port-only case).
+
+## [1.6.5] - 2026-10-14
+### Changed
+- `bobcat-cli --amt --enable vnc`: on the real device the KVM service now enables (`RequestStateChange(2)` ok) but the settings Put still answers `UnsupportedFeature`. The password and port 5900 are now put in two steps, so the error says which one the firmware refuses (`setting the RFB password failed` or `turning on port 5900 failed`).
+
+## [1.6.4] - 2026-10-14
+### Fixed
+- `bobcat-cli --amt --enable vnc` on the real AMT 14.1.79 device: the trimmed Put sets added in 1.6.3 failed schema validation (`SchemaValidationError`: AMT's schema needs the whole instance, so the Put goes back to sending every property as read; the earlier `UnsupportedFeature` therefore came from the request itself, not from the capability flags). The KVM service is now enabled first (`CIM_KVMRedirectionSAP.RequestStateChange(2)`), then the settings are put (`Is5900PortEnabled`, `RFBPassword`); the device may have refused port 5900 while the service was still "enabled, offline". Not confirmed on the device yet.
+- `BOBCAT_DEBUG=1` prints each AMT request's outcome (`[amt] Put IPS_KVMRedirectionSettingData: ok` or the fault), without any password.
+
+## [1.6.3] - 2026-10-14
+### Fixed
+- `bobcat-cli --amt --enable vnc`: the Put of the KVM settings answered `UnsupportedFeature` on an AMT 14.1.79 device (`--info` worked, so login and Gets are fine). The Put sent back every property of the instance, including read-only capability flags (`ZlibControlSupported`, `GrayscalePixelFormatSupported`, `DoubleBufferActive`, `BackToBackFbMode`, `EnabledByMEBx`...). It now sends only the writable properties (`DefaultScreen`, `Is5900PortEnabled`, `OptInPolicy`, `RFBPassword`, `SessionTimeout`, plus the identifying `ElementName`/`InstanceID`), and if the device still refuses with a 400 it retries with smaller sets (without `DefaultScreen`, then only `InstanceID`, `Is5900PortEnabled`, `RFBPassword`). Checked against a mock that refuses the capability flags; not yet against the real device.
+
+## [1.6.2] - 2026-10-14
+### Fixed
+- `bobcat-cli --amt`: an HTTP 400 from the device was reported without its reason, because the fault's `<a:Text xml:lang="en-US">` has an attribute and the XML reader skipped it. The message now carries the fault code and text (for example `HTTP 400 (e:InvalidSelectors: The Selectors for the resource are not valid.)`), and `--enable vnc` / `--disable vnc` say which step failed (saving the KVM settings, or enabling the KVM service after they were saved). Found when the first `--enable vnc` on a real AMT 14.1 device answered HTTP 400.
+
+## [1.6.1] - 2026-10-14
+### Changed
+- `bobcat-cli --amt --enable vnc`: the new VNC (RFB) password prompt now explains that it is a separate password from the admin login, says exactly what is wrong with a rejected one (length and which of upper case, lower case, digit, special character is missing), asks twice because nothing is echoed, and allows three tries. A `--vncpass` / `BOBCAT_VNC_PASS` value is checked the same way.
+- `--pass` and `--vncpass` help say what they mean with `--amt` (admin login password; KVM RFB password).
+
+## [1.6.0] - 2026-10-14
+### Added
+- Intel AMT support in `bobcat-cli` (new `src/amt.rs`): `--amt` with `--ip`, `--user` (admin), `--amt-port` (16992). WS-Management over plain HTTP with digest authentication (own client: SOAP envelopes, MD5 digest with qop=auth, chunked answers). `--info` (or `--amt` alone) prints firmware, host name, provisioning, power state, redirection and KVM state; `--power status|on|off|off-hard|cycle|reset|sleep|hibernate|nmi` (confirmation unless `--yes` or `on`; only states the device offers); `--enable vnc [--vncpass]` / `--disable vnc` turn the built-in KVM on and off (RFB password rules checked first, then IPS_KVMRedirectionSettingData Put with port 5900 and CIM_KVMRedirectionSAP RequestStateChange); `--console vnc` with `--amt` uses port 5900 without TLS. The login password uses the same keychain flow as iDRACs.
+- Designed from real answers of an AMT 14.1.79 device (provisioned, no user consent needed, KVM service enabled but offline, port 5900 off).
+### Notes
+- Checked against a mock server that replays those answers and verifies the digest (info, power, KVM enable/disable, wrong password, and the rejected cases); this found and fixed a Put that dropped fields. Not yet run against the real device: the Put of the KVM settings and the power requests are the parts that may need adjusting. Not supported: TLS (16993), SOL and IDER (redirection protocol on 16994), the GUI.
+
 ## [1.5.9] - 2026-10-14
 ### Added
 - `bobcat-cli --disconnect sol`: closes the sessions the iDRAC8 lists as type `SOL` by session ID, like `gui`, `vc` and `ssh`. Real `getssninfo` listings from two iDRAC8s show both an ipmitool Serial over LAN session (`--console sol`) and a serial console opened over SSH (`console com2`, `--console ssh`) as `SOL`, so one option covers both. Not run on the iDRAC yet.
