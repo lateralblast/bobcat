@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.9.0
+Version: 1.9.3
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -56,12 +56,14 @@ process arguments (`--pass` and `--vncpass` do, if you use them).
 | `--amt` (or `--amt --info`) | Shows what the device reports: firmware, host name, provisioning, power state, redirection (SOL/IDER) and KVM state. |
 | `--amt --power status\|on\|off\|off-hard\|cycle\|reset\|sleep\|hibernate\|nmi` | Shows or changes the power state. Everything but `on` and `status` asks you to type `yes` first (`--yes` skips it). Only the states the device offers in its current power state are accepted. |
 | `--amt --enable vnc` | Turns on the AMT KVM: sets the RFB password (`--vncpass`, `BOBCAT_VNC_PASS` or the prompt; exactly 8 characters with upper case, lower case, a digit and a special character), opens VNC on port 5900 and enables the KVM service. `--disable vnc` turns it off. |
-| `--amt --boot hdd\|pxe\|cd\|diag\|bios\|normal\|status` | Chooses what the next start does: boot once from that device, enter the BIOS setup, clear the override, or show the boot settings. It powers nothing: combine it with `--power on` (machine off) or `--power reset` / `cycle`. `--boot-sol` sends the BIOS / boot text to Serial over LAN (then `--console sol`). |
+| `--amt --boot hdd\|pxe\|cd\|diag\|bios\|ider-cd\|ider-floppy\|normal\|status` | Chooses what the next start does: boot once from that device, enter the BIOS setup, clear the override, or show the boot settings. It powers nothing: combine it with `--power on` (machine off) or `--power reset` / `cycle`. `--boot-sol` sends the BIOS / boot text to Serial over LAN (then `--console sol`). |
+| `--amt --ider-cd FILE.iso` / `--ider-floppy FILE.img` | Virtual media (IDE-R): serves the image read-only to the machine as a CD/DVD or floppy drive until Ctrl+C. `--ider-start reboot\|graceful\|now` says when the machine starts using it. To boot from it, give both in one command: `--amt --ider-cd x.iso --boot ider-cd --power reset` (the session is opened before the boot setting and the power action). Needs IDE-R enabled: `--amt --enable ider`. |
+| `--amt --enable sol\|ider` / `--disable ...` | Switches Serial over LAN and IDE-R on or off, leaving the other as it is. |
 | `--amt --console vnc` | The text conversion of the AMT KVM screen, through the redirection port (16994, or 16995 with TLS) bridged to a local port. |
 | `--amt --amt-redir-test BRIDGE` | The same bridge on its own: prints a local port to point any VNC viewer at (view it from another machine than the one being captured, or it shows its own window inside the picture). |
 | `--amt --console sol` | Serial over LAN through the redirection port (16994, or 16995 with TLS; ipmitool does not work with AMT's SOL; it must be enabled in AMT). Disconnect with `~.` at the start of a line or Ctrl+\\. In the desktop app: protocol "AMT SOL". |
 
-With TLS enabled on the device (web services 16993, redirection 16995) bobcat uses it automatically; `--tls` / `--notls` force the choice and `--amt-port` overrides the port. The device's certificate is pinned on first use. IDER (virtual media) is not supported yet. The desktop app has AMT (KVM) and AMT SOL entries, not power or boot controls yet.
+With TLS enabled on the device (web services 16993, redirection 16995) bobcat uses it automatically; `--tls` / `--notls` force the choice and `--amt-port` overrides the port. The device's certificate is pinned on first use. In the desktop app the AMT and AMT SOL entries show two extra rows: virtual media (ISO path, Browse, start mode, Mount, Unmount, Mount and boot) and power and boot controls (Status, On, Reset, Cycle, Off, Next start, Enable IDE-R).
 
 **Consoles:**
 
@@ -175,9 +177,9 @@ For an Intel AMT (vPro) machine the usual tool is MeshCommander (version 0.9.5-a
 |---|---|---|---|---|
 | Graphical KVM | Yes: in the app (canvas, with keyboard and mouse), or bridged to a local port for any VNC viewer | Yes, in its browser page | No | Only through Bobcat's bridge (the device's own port 5900 could not be enabled on the test device) |
 | Serial over LAN | Yes: `--console sol`, app entry "AMT SOL" | Yes | Does not work with AMT on the test device | No |
-| Power actions | `--power` (status works; the changes are *untested*) | Yes | Not tried | No |
-| Boot source (PXE, disk, CD, BIOS setup) | `--boot` (`status` works; the overrides are *untested*) | Yes | Not tried | No |
-| IDER (virtual media) | Not yet | Yes | No | No |
+| Power actions | `--power` and the app's Power buttons (status works; the changes are *untested*) | Yes | Not tried | No |
+| Boot source (PXE, disk, CD, BIOS setup) | `--boot` and the app's Next start (`status` works; the overrides are *untested*) | Yes | Not tried | No |
+| IDER (virtual media) | `--ider-cd` / `--ider-floppy` (command line) and a Mount row in the app (ISO only, plus "Mount and boot"); read-only; an ISO mounts on the host, booting from it is *untested* | Yes (CD/DVD and floppy images) | No | No |
 | TLS | Yes, automatic when the device has it; certificate pinned on first use | Yes (an option per connection) | n/a | n/a |
 | Paste, text size, on-screen keyboard in the KVM | The same controls as the VNC console (paste and copy not yet tried on AMT) | Not checked | n/a | Client-dependent |
 | Password in the OS keychain | Yes (Remember) | Not checked | No | Client-dependent |

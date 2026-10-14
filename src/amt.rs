@@ -379,33 +379,50 @@ impl Amt {
         Ok(())
     }
 
-    /// Choose what the NEXT start does: boot from a device once, enter the BIOS setup, or (Normal)
+    /// Choose what the NEXT start does: boot once from a device, enter the BIOS setup, or (Normal)
     /// clear any override. It takes effect at the next power-on or reset; it does not power anything.
-    /// With `sol` the BIOS / boot text is redirected to Serial over LAN.
+    /// With `sol` the BIOS / boot text is redirected to Serial over LAN. The steps and properties are
+    /// MeshCommander's (its power-action code): clear the boot order, put the boot settings, make that
+    /// configuration the next one, then name the boot source.
     pub fn set_boot(&self, what: BootSource, sol: bool) -> Result<(), String> {
-        // 1. the boot settings: BIOS setup yes/no, SOL yes/no (a separate Put of the whole instance)
+        let cfg = format!("{CIM}/CIM_BootConfigSetting");
+        let cfg_id = ("InstanceID", "Intel(r) AMT: Boot Configuration 0");
+        let anon = "<a:Address>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:Address>";
+        let change_order = |source: Option<&str>| -> Result<(), String> {
+            let input = match source {
+                Some(id) => format!(
+                    "<p:ChangeBootOrder_INPUT xmlns:p=\"{cfg}\"><p:Source>{anon}<a:ReferenceParameters><w:ResourceURI>{CIM}/CIM_BootSourceSetting</w:ResourceURI><w:SelectorSet><w:Selector Name=\"InstanceID\">{}</w:Selector></w:SelectorSet></a:ReferenceParameters></p:Source></p:ChangeBootOrder_INPUT>",
+                    xml_escape(id)
+                ),
+                None => format!("<p:ChangeBootOrder_INPUT xmlns:p=\"{cfg}\"/>"),
+            };
+            self.invoke(&cfg, "ChangeBootOrder", &[cfg_id], &input).map(|_| ())
+        };
+        // 1. some firmware does not clear the old boot order by itself
+        change_order(None).map_err(|e| format!("clearing the boot order: {e}"))?;
+        // 2. the boot settings: the whole instance, with every option MeshCommander sets put to a known value
         const KEEP: &[&str] = &[
             "BIOSPause", "BIOSSetup", "BootMediaIndex", "ConfigurationDataReset", "ElementName", "EnforceSecureBoot", "FirmwareVerbosity",
             "ForcedProgressEvents", "IDERBootDevice", "InstanceID", "LockKeyboard", "LockPowerButton", "LockResetButton", "LockSleepButton",
-            "OptionsCleared", "OwningEntity", "ReflashBIOS", "SecureErase", "UseIDER", "UseSOL", "UseSafeMode", "UserPasswordBypass",
+            "OwningEntity", "PlatformErase", "ReflashBIOS", "SecureErase", "UseIDER", "UseSOL", "UseSafeMode", "UserPasswordBypass",
         ];
-        let bios = if what == BootSource::Bios { "true" } else { "false" };
-        let body = self
-            .put_body(AMT, "AMT_BootSettingData", &[("BIOSSetup", bios), ("UseSOL", if sol { "true" } else { "false" }), ("UseIDER", "false")], KEEP)
-            .map_err(|e| format!("reading the boot settings: {e}"))?;
+        let current = self.get(&format!("{AMT}/AMT_BootSettingData")).map_err(|e| format!("reading the boot settings: {e}"))?;
+        let b = |v: bool| if v { "true" } else { "false" };
+        let mut changes: Vec<(&str, &str)> = vec![
+            ("BIOSPause", "false"), ("EnforceSecureBoot", "false"), ("BIOSSetup", b(what == BootSource::Bios)), ("BootMediaIndex", "0"),
+            ("FirmwareVerbosity", "0"), ("ForcedProgressEvents", "false"), ("IDERBootDevice", if what == BootSource::IderCd { "1" } else { "0" }),
+            ("LockKeyboard", "false"), ("LockPowerButton", "false"), ("LockResetButton", "false"), ("LockSleepButton", "false"),
+            ("ReflashBIOS", "false"), ("UseIDER", b(matches!(what, BootSource::IderCd | BootSource::IderFloppy))), ("UseSOL", b(sol)),
+            ("UseSafeMode", "false"), ("UserPasswordBypass", "false"), ("ConfigurationDataReset", "false"),
+        ];
+        // properties only newer firmware has: put to false when they are there
+        for name in ["SecureErase", "PlatformErase"] {
+            if field(&current, name).is_some() {
+                changes.push((name, "false"));
+            }
+        }
+        let body = self.put_body(AMT, "AMT_BootSettingData", &changes, KEEP).map_err(|e| format!("preparing the boot settings: {e}"))?;
         self.put(&format!("{AMT}/AMT_BootSettingData"), &body).map_err(|e| format!("saving the boot settings: {e}"))?;
-        // 2. the boot device: one of AMT's "Force ... Boot" sources, or none
-        let cfg = format!("{CIM}/CIM_BootConfigSetting");
-        let anon = "<a:Address>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:Address>";
-        let input = match what.source_id() {
-            Some(id) => format!(
-                "<p:ChangeBootOrder_INPUT xmlns:p=\"{cfg}\"><p:Source>{anon}<a:ReferenceParameters><w:ResourceURI>{CIM}/CIM_BootSourceSetting</w:ResourceURI><w:SelectorSet><w:Selector Name=\"InstanceID\">{}</w:Selector></w:SelectorSet></a:ReferenceParameters></p:Source></p:ChangeBootOrder_INPUT>",
-                xml_escape(id)
-            ),
-            None => format!("<p:ChangeBootOrder_INPUT xmlns:p=\"{cfg}\"/>"),
-        };
-        self.invoke(&cfg, "ChangeBootOrder", &[("InstanceID", "Intel(r) AMT: Boot Configuration 0")], &input)
-            .map_err(|e| format!("setting the boot device: {e}"))?;
         // 3. make that configuration the one used next (role 1 = IsNext)
         let svc = format!("{CIM}/CIM_BootService");
         let input = format!(
@@ -413,7 +430,31 @@ impl Amt {
         );
         let selectors = [("Name", "Intel(r) AMT Boot Service"), ("CreationClassName", "CIM_BootService"), ("SystemCreationClassName", "CIM_ComputerSystem"), ("SystemName", "Intel(r) AMT")];
         self.invoke(&svc, "SetBootConfigRole", &selectors, &input).map_err(|e| format!("activating the boot configuration: {e}"))?;
+        // 4. the boot device, after the role is set (MeshCommander's order)
+        if let Some(id) = what.source_id() {
+            change_order(Some(id)).map_err(|e| format!("setting the boot device: {e}"))?;
+        }
         Ok(())
+    }
+
+    // ---- redirection (SOL and IDER) ---------------------------------------------------------
+
+    /// Switch Serial over LAN and IDE-R (virtual media) on or off. The redirection listener (the port
+    /// the KVM, SOL and IDER connect to) is what AMT_RedirectionService.EnabledState says about both.
+    pub fn set_redirection(&self, sol: bool, ider: bool) -> Result<(), String> {
+        let state = 32768 + if ider { 1 } else { 0 } + if sol { 2 } else { 0 };
+        let svc = format!("{AMT}/AMT_RedirectionService");
+        let input = format!("<r:RequestStateChange_INPUT xmlns:r=\"{svc}\"><r:RequestedState>{state}</r:RequestedState></r:RequestStateChange_INPUT>");
+        let selectors = [("Name", "Intel(r) AMT Redirection Service"), ("CreationClassName", "AMT_RedirectionService"), ("SystemCreationClassName", "CIM_ComputerSystem"), ("SystemName", "Intel(r) AMT")];
+        self.invoke(&svc, "RequestStateChange", &selectors, &input)?;
+        Ok(())
+    }
+
+    /// (SOL enabled, IDER enabled) as the device reports them.
+    pub fn redirection(&self) -> Result<(bool, bool), String> {
+        let xml = self.get(&format!("{AMT}/AMT_RedirectionService"))?;
+        let st: u32 = field(&xml, "EnabledState").and_then(|v| v.parse().ok()).ok_or("no redirection state in the answer")?;
+        Ok((st & 2 != 0 && st >= 32768, st & 1 != 0 && st >= 32768))
     }
 
     // ---- KVM (RFB on port 5900) ------------------------------------------------------------
@@ -559,6 +600,10 @@ pub enum BootSource {
     Bios,
     /// No override
     Normal,
+    /// The IDE-R (virtual media) CD/DVD drive
+    IderCd,
+    /// The IDE-R (virtual media) floppy drive
+    IderFloppy,
 }
 
 impl BootSource {
@@ -569,7 +614,7 @@ impl BootSource {
             BootSource::Pxe => Some("Intel(r) AMT: Force PXE Boot"),
             BootSource::Cd => Some("Intel(r) AMT: Force CD/DVD Boot"),
             BootSource::Diag => Some("Intel(r) AMT: Force Diagnostic Boot"),
-            BootSource::Bios | BootSource::Normal => None,
+            BootSource::Bios | BootSource::Normal | BootSource::IderCd | BootSource::IderFloppy => None,
         }
     }
 }

@@ -2,7 +2,11 @@
 // Version: 1.1.9
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
+#[allow(dead_code)]
 mod amt;
+mod amt_control;
+mod amt_ider;
+mod amt_media;
 #[allow(dead_code)]
 mod amt_redir;
 mod html5;
@@ -76,6 +80,7 @@ fn shutdown(app: &AppHandle) {
     }
     html5::close_window(app);
     java_console::stop();
+    amt_media::stop();
     html5::logout_all();
     wait_text_session(8);
 }
@@ -675,7 +680,7 @@ fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, c
 
 /// The AMT redirection port and, when the device has TLS on (it answers on 16993), the certificate check
 /// for it (trust on first use, like the iDRAC's; the Certificate button shows it).
-fn amt_target(ip: &str) -> (u16, Option<amt_redir::Pin>) {
+pub(crate) fn amt_target(ip: &str) -> (u16, Option<amt_redir::Pin>) {
     if amt_redir::tls_available(ip) {
         let ip = ip.to_string();
         (16995, Some(Box::new(move |t| check_pin(&ip, t))))
@@ -1123,7 +1128,7 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, connect_amt, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, connect_amt, amt_control::amt_status, amt_control::amt_power, amt_control::amt_boot, amt_control::amt_ider_enable, amt_control::amt_boot_iso, amt_media::pick_iso, amt_media::ider_mount, amt_media::ider_unmount, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat");
 }

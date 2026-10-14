@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.9.0
+// Version: 1.9.3
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 mod amt;
+mod amt_ider;
 mod amt_redir;
 mod keychain;
 mod screen_text;
@@ -25,8 +26,10 @@ enum Feature {
     Html5,
     /// The iDRAC Java virtual console (Java Web Start viewer)
     Java,
-    /// IPMI over LAN, Serial over LAN and serial console redirection
+    /// IPMI over LAN, Serial over LAN and serial console redirection (with --amt: AMT's Serial over LAN)
     Sol,
+    /// With --amt only: IDE-R virtual media (CD/DVD and floppy images served from this computer)
+    Ider,
 }
 
 /// What `--disconnect` ends on the iDRAC
@@ -123,6 +126,10 @@ enum Boot {
     Bios,
     /// Clear any boot override
     Normal,
+    /// Boot from the IDE-R virtual CD/DVD (start the image with --ider-cd)
+    IderCd,
+    /// Boot from the IDE-R virtual floppy (start the image with --ider-floppy)
+    IderFloppy,
 }
 
 impl Boot {
@@ -135,8 +142,21 @@ impl Boot {
             Boot::Diag => Some(amt::BootSource::Diag),
             Boot::Bios => Some(amt::BootSource::Bios),
             Boot::Normal => Some(amt::BootSource::Normal),
+            Boot::IderCd => Some(amt::BootSource::IderCd),
+            Boot::IderFloppy => Some(amt::BootSource::IderFloppy),
         }
     }
+}
+
+/// When the AMT machine starts using the IDE-R image
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum IderStartArg {
+    /// At the next boot
+    Reboot,
+    /// After the OS has shut down gracefully
+    Graceful,
+    /// Immediately
+    Now,
 }
 
 /// iDRAC VNC SSL encryption setting (iDRAC.VNCServer.SSLEncryptionBitLength)
@@ -277,6 +297,20 @@ struct Args {
     /// power anything: combine it with --power on (machine off) or --power reset / cycle
     #[arg(long, value_enum, requires = "amt")]
     boot: Option<Boot>,
+
+    /// With --amt, serve this CD/DVD image (.iso) to the machine as a virtual CD/DVD drive (IDE-R). The
+    /// session stays open until Ctrl+C: start it first, then boot from it (--boot ider-cd --power reset)
+    #[arg(long, requires = "amt", value_name = "FILE")]
+    ider_cd: Option<std::path::PathBuf>,
+
+    /// With --amt, serve this floppy image (.img) as a virtual floppy drive (IDE-R), like --ider-cd
+    #[arg(long, requires = "amt", value_name = "FILE")]
+    ider_floppy: Option<std::path::PathBuf>,
+
+    /// With --ider-cd / --ider-floppy: when the machine starts using the image: reboot (the next
+    /// boot, the default), graceful or now
+    #[arg(long, value_enum, default_value = "reboot")]
+    ider_start: IderStartArg,
 
     /// With --boot, redirect the BIOS / boot text to Serial over LAN (then use --console sol)
     #[arg(long, requires = "boot")]
@@ -1360,16 +1394,59 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
     if !args.disconnect.is_empty() {
         return Err("--disconnect is for iDRAC sessions, not --amt".into());
     }
-    if args.enable.iter().chain(&args.disable).any(|f| *f != Feature::Vnc) {
-        return Err("with --amt only --enable vnc / --disable vnc apply (the AMT KVM)".into());
+    if args.enable.iter().chain(&args.disable).any(|f| !matches!(f, Feature::Vnc | Feature::Sol | Feature::Ider)) {
+        return Err("with --amt, --enable / --disable take vnc (the KVM's own port 5900), sol and ider".into());
     }
     let tls = amt_tls(args);
     let (ip, trust_new) = (args.ip.clone(), args.trust_new_hostkey);
     let pin: Option<amt_redir::Pin> = if tls { Some(Box::new(move |t| vnc_text::check_pin(&ip, t, trust_new))) } else { None };
     let device = amt::Amt::new(&args.ip, args.amt_port.unwrap_or(if tls { 16993 } else { 16992 }), &args.user, pass, pin);
-    let nothing = !args.info && !args.amt_diagnose_kvm && args.amt_redir_test.is_none() && args.power.is_none() && args.boot.is_none() && args.enable.is_empty() && args.disable.is_empty() && args.console.is_none();
+    let nothing = !args.info && !args.amt_diagnose_kvm && args.amt_redir_test.is_none() && args.power.is_none() && args.boot.is_none() && args.ider_cd.is_none() && args.ider_floppy.is_none() && args.enable.is_empty() && args.disable.is_empty() && args.console.is_none();
     if args.info || nothing {
         device.info()?;
+    }
+    if args.enable.iter().chain(&args.disable).any(|f| matches!(f, Feature::Sol | Feature::Ider)) {
+        let (mut sol, mut ider) = device.redirection()?;
+        for f in &args.enable {
+            match f {
+                Feature::Sol => sol = true,
+                Feature::Ider => ider = true,
+                _ => {}
+            }
+        }
+        for f in &args.disable {
+            match f {
+                Feature::Sol => sol = false,
+                Feature::Ider => ider = false,
+                _ => {}
+            }
+        }
+        device.set_redirection(sol, ider)?;
+        println!("[changed] AMT redirection: Serial over LAN {}, IDE-R {}", if sol { "on" } else { "off" }, if ider { "on" } else { "off" });
+    }
+    // IDE-R: the session has to be open before the machine boots from the image
+    let mut ider_session = None;
+    if args.ider_cd.is_some() || args.ider_floppy.is_some() {
+        install_signal_handlers();
+        let (rport, rpin) = amt_redir_target(args);
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stats = std::sync::Arc::new(amt_ider::IderStats::default());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (ip, user, pw) = (args.ip.clone(), args.user.clone(), pass.to_string());
+        let (cd, fl) = (args.ider_cd.clone(), args.ider_floppy.clone());
+        let start = match args.ider_start {
+            IderStartArg::Reboot => amt_ider::IderStart::OnReboot,
+            IderStartArg::Graceful => amt_ider::IderStart::Graceful,
+            IderStartArg::Now => amt_ider::IderStart::Now,
+        };
+        let (stop2, stats2) = (stop.clone(), stats.clone());
+        let handle = thread::spawn(move || amt_ider::run(&ip, rport, &user, &pw, rpin, fl.as_deref(), cd.as_deref(), start, stop2, stats2, Some(tx)));
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(Ok(())) => println!("IDE-R session open: {} {}(the machine uses it {})", if args.ider_cd.is_some() { "CD/DVD" } else { "" }, if args.ider_floppy.is_some() { "floppy " } else { "" }, match args.ider_start { IderStartArg::Reboot => "at its next boot", IderStartArg::Graceful => "after a graceful shutdown", IderStartArg::Now => "now" }),
+            Ok(Err(e)) => return Err(format!("IDE-R: {e}{}", if e.contains("refused") { " (is IDE-R enabled? add --enable ider)" } else { "" })),
+            Err(_) => return Err("IDE-R: the device did not accept the session in 30 s".into()),
+        }
+        ider_session = Some((stop, stats, handle));
     }
     if let Some(b) = args.boot {
         match b.source() {
@@ -1395,6 +1472,27 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
                 println!("power change requested (state {state}); the device is now {}", amt::power_name(device.power_state()?));
             }
         }
+    }
+    if let Some((stop, stats, handle)) = ider_session {
+        println!("Serving the image(s); press Ctrl+C to end the IDE-R session.");
+        let mut last = std::time::Instant::now();
+        while !signaled() && !handle.is_finished() {
+            thread::sleep(Duration::from_millis(300));
+            if last.elapsed() >= Duration::from_secs(10) {
+                last = std::time::Instant::now();
+                use std::sync::atomic::Ordering::Relaxed;
+                println!("IDE-R: {} MB of image sent ({} KB in, {} KB out)", stats.image_bytes.load(Relaxed) / 1_048_576, stats.bytes_from_amt.load(Relaxed) / 1024, stats.bytes_to_amt.load(Relaxed) / 1024);
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        return match handle.join() {
+            Ok(Ok(())) => {
+                println!("IDE-R session ended");
+                Ok(None)
+            }
+            Ok(Err(e)) => Err(format!("IDE-R: {e}")),
+            Err(_) => Err("IDE-R thread panicked".into()),
+        };
     }
     if let Some(p) = &args.amt_redir_test {
         if p.eq_ignore_ascii_case("bridge") {
@@ -1475,12 +1573,13 @@ fn configure(sess: &Session, args: &Args) -> Result<(), String> {
             Feature::Html5 => enable_console(sess, 2)?,
             Feature::Java => enable_console(sess, 1)?,
             Feature::Sol => enable_sol(sess)?,
+            Feature::Ider => return Err("--enable ider is for an Intel AMT device (add --amt)".into()),
         }
     }
     for f in &args.disable {
         match f {
             Feature::Vnc => disable_vnc(sess)?,
-            Feature::Html5 | Feature::Java | Feature::Sol => {
+            Feature::Html5 | Feature::Java | Feature::Sol | Feature::Ider => {
                 return Err("--disable is only supported for vnc".into())
             }
         }

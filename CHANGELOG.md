@@ -2,6 +2,29 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.9.3] - 2026-10-15
+### Added
+- GUI: AMT power, boot and IDE-R controls (AMT and AMT SOL protocols), using the WS-Management client (`amt.rs`, now a full copy of the CLI's in `gui/src-tauri/src`; TLS and certificate pinning as for the KVM). A new toolbar row: Status (power state, whether SOL and IDE-R are on), On, Reset, Cycle, Off (the last three need a second click within 4 s, "Sure?"), a Next start choice (Normal, Hard drive, Network (PXE), CD/DVD, Virtual media (ISO), BIOS setup, Diagnostics) with an SOL checkbox and Set, and Enable IDE-R. The media row gets **Mount and boot**: it switches IDE-R on if it is off, opens the IDE-R session, sets the boot to the virtual CD and resets the machine (or powers it on if it is off). Results appear in a line at the end of the row. `amt_control.rs` has the commands, `amt_media.rs` now has `start_session` for both Mount and Mount and boot. Not yet tried.
+### Notes
+- Keep the window open while the machine boots from the ISO: the IDE-R session ends with the app.
+- `amt.rs` is duplicated in both crates now, like `amt_redir.rs` and `amt_ider.rs`.
+
+## [1.9.2] - 2026-10-15
+### Added
+- GUI: virtual media for the AMT views. With the AMT or AMT SOL protocol selected a third toolbar row appears: an ISO path (Browse... opens a native file dialog, via the `rfd` crate), a start mode (at next boot, after shutdown, now), Mount and Unmount, and a status line (the MB of the image the machine has read). Mount opens an IDE-R session on the redirection port with the host, user and password from the toolbar (TLS and pinning as for the KVM and SOL) and serves the ISO read-only until Unmount; it runs next to the KVM or SOL connection and ends with the app or when you leave the AMT protocols. The same `amt_ider.rs` as the CLI (a copy). The last ISO path is remembered. Works in the app on the 192.168.9.238 device (user's report).
+### Notes
+- The app cannot switch IDE-R on in the device, set the boot device or reset the machine yet (those are `bobcat-cli --amt --enable ider`, `--boot ider-cd` and `--power`); mount the ISO, then use the machine's boot menu, or run the CLI for the boot settings. CD/DVD images only (the CLI also takes a floppy image).
+
+## [1.9.1] - 2026-10-15
+### Added
+- Intel AMT IDE-R (virtual media): `bobcat-cli --amt --ider-cd FILE.iso` and/or `--ider-floppy FILE.img` serve the images read-only to the machine as a CD/DVD and floppy drive over the redirection channel (16994, or 16995 with TLS), until Ctrl+C. `--ider-start reboot|graceful|now` (default reboot) says when the machine starts using them. Start it first, then boot from it: `--amt --ider-cd x.iso --boot ider-cd --power reset` in one command (the session is opened before the boot settings and the power action). `src/amt_ider.rs` is a port of MeshCommander's `CreateAmtRemoteIder` (open session, the device's SCSI commands answered from the image, read buffer from the device); two loopback tests check the READ_10 and READ_CAPACITY answers (`cargo test amt_ider`). An ISO was presented to the 192.168.9.238 host through `--ider-cd` and mounted there (user's report); booting from it (`--boot ider-cd`), the floppy and `--ider-start graceful|now` are not tried yet.
+- `--amt --enable sol|ider` / `--disable sol|ider`: switch Serial over LAN and IDE-R on or off (`AMT_RedirectionService.RequestStateChange`, 32768 + 1 for IDER + 2 for SOL), keeping the other as it is.
+- `--boot ider-cd` / `ider-floppy`: boot from the IDE-R drive (UseIDER, IDERBootDevice 1 for the CD, 0 for the floppy).
+### Changed
+- `--amt --boot` now follows MeshCommander's order, which is proven on devices: clear the boot order, put `AMT_BootSettingData` with every option set to a known value (BIOSPause, EnforceSecureBoot, FirmwareVerbosity, the lock options and so on; `OptionsCleared` is no longer sent back, MeshCommander removes it), `SetBootConfigRole`, and only then `ChangeBootOrder` with the boot source. 1.9.0 had the source before the role and sent `OptionsCleared`, which was likely to be refused. Still untested on a device.
+### Notes
+- The GUI has no IDE-R, power or boot controls yet.
+
 ## [1.9.0] - 2026-10-15
 ### Added
 - Intel AMT boot source control: `bobcat-cli --amt --boot hdd|pxe|cd|diag|bios|normal|status` chooses what the NEXT start does (boot once from a device, enter the BIOS setup, clear the override, or show the device's boot settings); `--boot-sol` sends the BIOS / boot text to Serial over LAN (then `--console sol`). It powers nothing, so combine it with `--power on` (machine off) or `--power reset` / `cycle`, e.g. `--amt --boot pxe --power reset`. Three steps, as in Intel's boot-control documentation: a Put of `AMT_BootSettingData` (BIOSSetup, UseSOL, UseIDER=false), `CIM_BootConfigSetting.ChangeBootOrder` with the source `Intel(r) AMT: Force Hard-drive / PXE / CD/DVD / Diagnostic Boot` (none for bios and normal), and `CIM_BootService.SetBootConfigRole` (role 1, IsNext) for `Intel(r) AMT: Boot Configuration 0`. Written from the documented class and instance names; NOT yet run against a device (the Put instance is rebuilt from a Get, like the KVM one, with only the writable properties sent back). The GUI has no AMT power or boot controls yet.

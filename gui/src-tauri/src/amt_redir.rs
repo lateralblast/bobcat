@@ -96,6 +96,15 @@ fn tls_forward(ip: &str, port: u16, pin: Pin) -> Result<u16, String> {
     Ok(local)
 }
 
+/// A logged-in redirection session (`proto` is "SOL ", "IDER" or "KVMR"), through the TLS relay when
+/// `pin` is given (the port is then the TLS one, 16995).
+pub fn redir_connect(ip: &str, port: u16, proto: &[u8; 4], user: &str, pass: &str, pin: Option<Pin>) -> Result<TcpStream, String> {
+    match pin {
+        Some(p) => open("127.0.0.1", tls_forward(ip, port, p)?, proto, user, pass),
+        None => open(ip, port, proto, user, pass),
+    }
+}
+
 fn debug() -> bool {
     std::env::var_os("BOBCAT_DEBUG").is_some()
 }

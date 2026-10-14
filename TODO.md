@@ -56,13 +56,13 @@ Status: [ ] open, [~] in progress, [x] done
     - [x] `--amt --boot status` (reads AMT_BootSettingData, 1.9.0)
   - Written but NOT yet tested on the device:
     - [ ] `--amt --boot hdd|pxe|cd|diag|bios|normal` (1.9.0): the Put of AMT_BootSettingData, `ChangeBootOrder` source names and `SetBootConfigRole`; then that the override lasts one boot and `--boot-sol` shows the BIOS on `--console sol`. See RESEARCH.md "AMT boot source control"
+    - [ ] IDE-R (virtual media), 1.9.1: `--ider-cd` / `--ider-floppy` with `--boot ider-cd|ider-floppy`, `--ider-start`, and `--enable ider` (`--enable sol` / `--disable` too). Ported from MeshCommander, two loopback tests pass; an ISO was presented to the host and mounted there (works). Still to try: booting from it (`--boot ider-cd --power reset`), the floppy, `--ider-start graceful|now`, `--enable ider` / `--disable`; the session is read-only (writes are refused) and a SCSI reset while a read is running is answered only after the read
     - [ ] `--amt --power on|off|off-hard|cycle|reset|sleep|hibernate|nmi` (1.6.0; only `status` has been used, the changes were mock-tested)
     - [ ] `--amt --console vnc` text conversion of the KVM screen (1.7.x, through the bridge)
     - [ ] a changed certificate: `--trust-new-hostkey` and the GUI Certificate button's Trust (1.8.9)
     - [ ] `--enable vnc` / `--disable vnc` (the 5900 port): the first test device (AMT 14.1, 192.168.10.69) refused RFBPassword and Is5900PortEnabled with UnsupportedFeature; never tried on this one, and the bridge makes it unnecessary
   - Open work:
-    - [ ] IDER (virtual media) over the redirection protocol; boot from it needs `--boot cd`
-    - [ ] GUI: AMT power and boot controls (the GUI has only the KVM and SOL entries)
+    - [ ] GUI: virtual media Mount/Unmount for AMT is in 1.9.2 (works). 1.9.3 adds power, next-start choice, Enable IDE-R and Mount and boot (untested; it is the same code as the CLI's `--power`, `--boot`, `--enable ider`, so the CLI results apply). Still missing in the GUI: a floppy image
     - [ ] GUI AMT screen: a mid-session resolution change disconnects it (the `vnc` crate's client cannot resize; the bridge only ignores a same-size notice); speed could still be better (every tile goes 8-bit RGB332 -> 32-bit through a local relay)
     - [ ] KVM user consent (`OptInRequired`) and the consent-code flow, if a device needs it (this one does not)
     - [ ] `--amt-redir-test SOL|IDER|KVMR` only uses the plain port

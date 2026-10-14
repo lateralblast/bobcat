@@ -461,6 +461,7 @@ function setProto() {
   const kind = proto === 'vnc' || proto === 'amt' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
   const hide = (sel, yes) => document.querySelectorAll(sel).forEach((el) => el.classList.toggle('hidden', yes));
   hide('.vnc-only', kind !== 'vnc');
+  hide('.amt-only', proto !== 'amt' && proto !== 'amtsol'); // virtual media (IDE-R) of an AMT machine
   hide('.vnc-net', proto !== 'vnc');           // port and TLS are for the iDRAC's VNC server
   hide('.login-only', proto === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
@@ -479,7 +480,63 @@ function setProto() {
   reportLayout();
   invoke('default_password', { protocol: proto }).then((pw) => { if (pw) $('pass').value = pw; else fillSaved(); });
 }
-$('proto').onchange = () => { invoke('disconnect'); invoke('disconnect_html5'); invoke('disconnect_java'); setProto(); };
+$('proto').onchange = () => {
+  invoke('disconnect'); invoke('disconnect_html5'); invoke('disconnect_java');
+  if ($('proto').value !== 'amt' && $('proto').value !== 'amtsol') invoke('ider_unmount'); // virtual media belongs to the AMT views
+  setProto();
+};
+
+// ---- AMT virtual media (IDE-R): serve an ISO from this computer to the AMT machine ----------
+try { const last = localStorage.getItem('bobcat-iso'); if (last) $('iso').value = last; } catch (e) {}
+$('isobrowse').onclick = async () => {
+  const p = await invoke('pick_iso');
+  if (p) { $('iso').value = p; try { localStorage.setItem('bobcat-iso', p); } catch (e) {} }
+};
+$('isomount').onclick = () => {
+  const iso = $('iso').value.trim();
+  if (!iso) { $('iderstatus').textContent = 'choose an ISO first'; return; }
+  if (!$('pass').value) { $('iderstatus').textContent = 'enter the AMT password first'; return; }
+  try { localStorage.setItem('bobcat-iso', iso); } catch (e) {}
+  invoke('ider_mount', { ip: $('ip').value, user: $('user').value || 'admin', pass: $('pass').value, iso, start: $('iderstart').value, remember: $('remember').checked });
+};
+$('isounmount').onclick = () => invoke('ider_unmount');
+listen('ider-status', (e) => {
+  $('iderstatus').textContent = e.payload.text;
+  $('isomount').disabled = e.payload.mounted;
+  $('isounmount').disabled = !e.payload.mounted;
+});
+$('isounmount').disabled = true;
+
+// ---- AMT power, boot and redirection controls ---------------------------------------------
+const amtArgs = () => ({ ip: $('ip').value, user: $('user').value || 'admin', pass: $('pass').value });
+const amtNote = (text) => { $('amtnote').textContent = text; $('amtnote').title = text; };
+// a disruptive button needs a second click within 4 s (the page cannot rely on confirm())
+function confirmed(btn, action) {
+  return () => {
+    if (!$('pass').value) { amtNote('enter the AMT password first'); return; }
+    if (btn.classList.contains('armed')) {
+      btn.classList.remove('armed'); btn.textContent = btn.dataset.label; clearTimeout(btn._t); action();
+    } else {
+      btn.dataset.label = btn.textContent; btn.textContent = 'Sure?'; btn.classList.add('armed');
+      btn._t = setTimeout(() => { btn.classList.remove('armed'); btn.textContent = btn.dataset.label; }, 4000);
+    }
+  };
+}
+const needPass = (f) => () => { if (!$('pass').value) { amtNote('enter the AMT password first'); return; } f(); };
+$('amtstatus').onclick = needPass(() => invoke('amt_status', amtArgs()));
+document.querySelectorAll('#amtrow button[data-power]').forEach((b) => {
+  const run = () => invoke('amt_power', { ...amtArgs(), action: b.dataset.power });
+  b.onclick = b.classList.contains('confirm') ? confirmed(b, run) : needPass(run);
+});
+$('amtbootset').onclick = needPass(() => invoke('amt_boot', { ...amtArgs(), what: $('amtboot').value, sol: $('amtbootsol').checked }));
+$('amtider').onclick = needPass(() => invoke('amt_ider_enable', amtArgs()));
+$('amtbootiso').onclick = confirmed($('amtbootiso'), () => {
+  const iso = $('iso').value.trim();
+  if (!iso) { amtNote('choose an ISO first'); return; }
+  try { localStorage.setItem('bobcat-iso', iso); } catch (e) {}
+  invoke('amt_boot_iso', { ...amtArgs(), iso, sol: $('amtbootsol').checked });
+});
+listen('amt-note', (e) => amtNote(e.payload.text));
 setProto();
 
 // ---- HTML5 console embedded below the toolbar ----------------------------

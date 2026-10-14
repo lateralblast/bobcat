@@ -31,6 +31,7 @@
                     border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 13px; }
   .osk-row button:hover { background: #4a4a60; }
   .osk-row button.on { background: #3b7ddd; border-color: #6cf; }
+  button.confirm.armed { background: #c0392b; color: #fff; }
   #cert, #jre { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 20; }
   #cert .box, #jre .box { background: #2a2a38; border: 1px solid #555; border-radius: 8px; padding: 16px; max-width: 640px; width: 90vw; }
   #cert pre, #jre pre { white-space: pre-wrap; word-break: break-all; margin: 0 0 12px; font: 13px monospace; }
@@ -83,6 +84,41 @@
         <option value="2">200%</option>
         <option value="fit">Fit window</option>
       </select>
+  </div>
+  <div class="row amt-only hidden" id="mediarow">
+    <label title="A CD/DVD image on this computer, served to the AMT machine as a virtual CD/DVD drive (IDE-R). It stays served until you Unmount.">ISO <input id="iso" size="38" placeholder="CD/DVD image (.iso)"></label>
+    <button id="isobrowse">Browse...</button>
+    <select id="iderstart" title="When the machine starts using the image" aria-label="When the machine uses the image">
+      <option value="reboot" selected>At next boot</option>
+      <option value="graceful">After shutdown</option>
+      <option value="now">Now</option>
+    </select>
+    <button id="isomount">Mount</button>
+    <button id="isounmount">Unmount</button>
+    <button id="amtbootiso" class="confirm" title="Mount the ISO, boot from it and reset (or power on) the machine">Mount and boot</button>
+    <span id="iderstatus" title="Virtual media status"></span>
+  </div>
+  <div class="row amt-only hidden" id="amtrow">
+    <span title="Power actions of the AMT machine">Power</span>
+    <button id="amtstatus" title="Power state and which redirections are on">Status</button>
+    <button data-power="on">On</button>
+    <button data-power="reset" class="confirm" title="Click twice: this restarts the machine">Reset</button>
+    <button data-power="cycle" class="confirm" title="Click twice: this power-cycles the machine">Cycle</button>
+    <button data-power="off" class="confirm" title="Click twice: this shuts the machine down">Off</button>
+    <span title="What the next start does; it applies at the next power-on or reset">Next start</span>
+    <select id="amtboot" aria-label="Next start">
+      <option value="normal" selected>Normal</option>
+      <option value="hdd">Hard drive</option>
+      <option value="pxe">Network (PXE)</option>
+      <option value="cd">CD/DVD</option>
+      <option value="ider-cd">Virtual media (ISO)</option>
+      <option value="bios">BIOS setup</option>
+      <option value="diag">Diagnostics</option>
+    </select>
+    <label title="Send the BIOS / boot text to Serial over LAN (use the AMT SOL protocol)"><input id="amtbootsol" type="checkbox"> SOL</label>
+    <button id="amtbootset">Set</button>
+    <button id="amtider" title="Switch IDE-R (virtual media) on in the device">Enable IDE-R</button>
+    <span id="amtnote" title="Result of the last action"></span>
   </div>
 </div>
 <div id="term" class="hidden"></div>
