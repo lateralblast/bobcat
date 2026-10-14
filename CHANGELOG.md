@@ -2,6 +2,10 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.4.6] - 2026-10-14
+### Added
+- `build.sh --release [--draft] [--yes] [--dry-run]`: tags the commit `v<version>`, pushes the tag and creates the GitHub release (`gh`) with the installers in `dist/` for that version; the release notes are that version's section of this file. It can follow a build (`--target mac --release`) or run alone on what is already in `dist/`. If the release exists, the files are added to it, so each platform can be built and added from its own machine. It never commits: it stops unless the working tree is committed and HEAD is pushed, refuses a tag that already points at another commit, asks before it does anything (`--yes` skips the question) and `--dry-run` only prints the commands. Only `--dry-run` has been run.
+
 ## [1.4.5] - 2026-10-14
 ### Changed
 - GUI Java console: the viewer's jars and native libraries are kept in `~/.config/bobcat/java-viewer/<ip>/` between sessions instead of being deleted and downloaded again every time. Each file is checked with its `ETag` (`If-None-Match`): the iDRAC8 answers `304 Not Modified` with no body, so a cached file costs one small request, and a firmware update that changes a file is picked up. The native libraries are only unpacked (and the macOS OpenSSL path patch applied) when they were downloaded or have not been unpacked yet. The launch file (`viewer.jnlp`, small, with a session-specific launch string) is still fetched each time. Delete the folder to force a fresh download. With `BOBCAT_DEBUG=1` a line says what came from the cache.

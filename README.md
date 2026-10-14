@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.4.5
+Version: 1.4.6
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -135,6 +135,11 @@ What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means th
 ./build.sh --target linux      # .deb and .AppImage (build on Linux)
 ./build.sh --target windows    # NSIS setup.exe (build on Windows, e.g. Git Bash)
 ```
+
+`./build.sh --release` (with or without a `--target`) tags the commit `v<version>`, pushes the tag and creates the GitHub
+release with the installers in `dist/` for that version (needs `gh`, logged in; notes come from `CHANGELOG.md`). Run it on each
+platform's machine to add that platform's files to the same release. It never commits: commit and push first. `--draft`
+makes a draft release, `--dry-run` shows what it would do, `--yes` skips the question.
 
 Needs the Rust toolchain and `cargo install tauri-cli --version '^2'` (and `perl` for the bundled OpenSSL). Each target
 must be built on its own platform. The macOS app is not signed or notarized: on first launch right-click it and choose
