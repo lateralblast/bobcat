@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "bobcat",
-  "version": "1.4.0",
+  "version": "1.4.5",
   "identifier": "au.com.lateralblast.bobcat",
   "build": { "frontendDist": "../ui" },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "title": "bobcat", "width": 1100, "height": 800 }],
+    "windows": [{ "title": "bobcat", "width": 1100, "height": 800, "acceptFirstMouse": true }],
     "security": { "csp": null }
   },
   "bundle": {

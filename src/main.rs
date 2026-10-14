@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.4.0
+// Version: 1.4.5
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -69,7 +69,7 @@ struct Args {
     #[arg(long)]
     check: bool,
 
-    /// With --check, install any missing packages using apt-get (uses sudo)
+    /// With --check, install any missing packages (apt-get with sudo on Linux, Homebrew on macOS; also Rosetta 2 on Apple Silicon)
     #[arg(long, requires = "check")]
     install: bool,
 
@@ -330,11 +330,18 @@ fn disable_vnc(sess: &Session) -> Result<(), String> {
 }
 
 enum Probe {
-    /// Executable found in PATH
+    /// Executable found in PATH (on macOS also in the Homebrew folders, which a GUI-launched
+    /// or minimal PATH may leave out)
     Bin(&'static str),
     /// Shared library soname known to the dynamic linker (Linux only)
     #[cfg(target_os = "linux")]
     Lib(&'static str),
+    /// Rosetta 2, which runs the Intel-only Java viewer on Apple Silicon
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    Rosetta,
+    /// A Java runtime for the GUI's Java console: BOBCAT_JAVA, the Java 8 the GUI downloaded into
+    /// ~/.config/bobcat/java (macOS), or `java` from the PATH (elsewhere)
+    Java,
 }
 
 struct Dep {
@@ -345,6 +352,9 @@ struct Dep {
     /// Homebrew formula (macOS)
     brew: &'static str,
     purpose: &'static str,
+    /// Optional: shown, but a miss does not fail --check; `hint` says what to do about it
+    optional: bool,
+    hint: &'static str,
 }
 
 const DEPS: &[Dep] = &[
@@ -354,6 +364,8 @@ const DEPS: &[Dep] = &[
         apt: "ipmitool",
         brew: "ipmitool",
         purpose: "--console sol",
+        optional: false,
+        hint: "",
     },
     Dep {
         name: "tesseract",
@@ -361,6 +373,8 @@ const DEPS: &[Dep] = &[
         apt: "tesseract-ocr",
         brew: "tesseract",
         purpose: "--console vnc, GUI: Copy (OCR)",
+        optional: false,
+        hint: "",
     },
     #[cfg(target_os = "linux")]
     Dep {
@@ -369,6 +383,8 @@ const DEPS: &[Dep] = &[
         apt: "libwebkit2gtk-4.1-0",
         brew: "",
         purpose: "GUI: window rendering",
+        optional: false,
+        hint: "",
     },
     #[cfg(target_os = "linux")]
     Dep {
@@ -377,52 +393,129 @@ const DEPS: &[Dep] = &[
         apt: "libgtk-3-0",
         brew: "",
         purpose: "GUI: window toolkit",
+        optional: false,
+        hint: "",
+    },
+    #[cfg(target_os = "macos")]
+    Dep {
+        name: "Homebrew",
+        probe: Probe::Bin("brew"),
+        apt: "",
+        brew: "",
+        purpose: "needed only for --install",
+        optional: true,
+        hint: "install it from https://brew.sh",
+    },
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    Dep {
+        name: "Rosetta 2",
+        probe: Probe::Rosetta,
+        apt: "",
+        brew: "",
+        purpose: "GUI: Java console (Intel-only viewer)",
+        optional: true,
+        hint: "softwareupdate --install-rosetta --agree-to-license (or --check --install)",
+    },
+    Dep {
+        name: "Java runtime",
+        probe: Probe::Java,
+        apt: "",
+        brew: "",
+        purpose: "GUI: Java console",
+        optional: true,
+        hint: if cfg!(target_os = "macos") {
+            "the GUI downloads Java 8 on first use (or set BOBCAT_JAVA)"
+        } else {
+            "install Java 8 or later (e.g. sudo apt install default-jre) or set BOBCAT_JAVA"
+        },
     },
 ];
 
+fn config_dir() -> std::path::PathBuf {
+    pins_path().parent().map(|p| p.to_path_buf()).unwrap_or_default()
+}
+
 fn present(probe: &Probe) -> bool {
     match probe {
-        Probe::Bin(b) => std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).any(|d| d.join(b).is_file()))
-            .unwrap_or(false),
+        Probe::Bin(b) => {
+            let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+            if cfg!(target_os = "macos") {
+                dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(std::path::PathBuf::from));
+            }
+            dirs.iter().any(|d| d.join(b).is_file())
+        }
         #[cfg(target_os = "linux")]
         Probe::Lib(l) => std::process::Command::new("ldconfig")
             .arg("-p")
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(l))
             .unwrap_or(false),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        Probe::Rosetta => std::path::Path::new("/Library/Apple/usr/share/rosetta/rosetta").exists(),
+        Probe::Java => {
+            if let Some(p) = std::env::var_os("BOBCAT_JAVA") {
+                return std::path::Path::new(&p).exists();
+            }
+            if cfg!(target_os = "macos") {
+                std::fs::read_dir(config_dir().join("java"))
+                    .map(|d| d.flatten().any(|e| e.path().join("Contents/Home/bin/java").exists()))
+                    .unwrap_or(false)
+            } else {
+                present(&Probe::Bin("java"))
+            }
+        }
     }
 }
 
 fn check(install: bool) -> bool {
-    let missing = report();
-    if missing.is_empty() {
+    let (missing, optional) = report();
+    // Rosetta 2 is the one optional item bobcat-cli can install (it is not a package manager package)
+    let rosetta = optional.contains(&"Rosetta 2");
+    if missing.is_empty() && !(install && rosetta) {
         return true;
     }
     if !install {
-        println!("\nInstall with: {} {}", installer().0, missing.join(" "));
-        return false;
+        if !missing.is_empty() {
+            println!("\nInstall with: {} {}", installer().0, missing.join(" "));
+        }
+        return missing.is_empty();
     }
-    println!("\nInstalling: {}", missing.join(" "));
-    if let Err(e) = apt_install(&missing) {
-        eprintln!("error: {e}");
-        return false;
-    }
-    println!();
-    report().is_empty()
-}
-
-/// Print the status of every dependency; returns the apt packages that are missing.
-fn report() -> Vec<&'static str> {
-    let mut missing = Vec::new();
-    for d in DEPS {
-        let ok = present(&d.probe);
-        println!("[{}] {} ({})", if ok { "ok" } else { "MISSING" }, d.name, d.purpose);
-        if !ok {
-            missing.push(if cfg!(target_os = "macos") { d.brew } else { d.apt });
+    if !missing.is_empty() {
+        println!("\nInstalling: {}", missing.join(" "));
+        if let Err(e) = apt_install(&missing) {
+            eprintln!("error: {e}");
+            return false;
         }
     }
-    missing
+    if rosetta {
+        println!("\nInstalling Rosetta 2 (softwareupdate may ask for your password)");
+        let st = std::process::Command::new("softwareupdate").args(["--install-rosetta", "--agree-to-license"]).status();
+        if !st.is_ok_and(|s| s.success()) {
+            eprintln!("error: could not install Rosetta 2");
+        }
+    }
+    println!();
+    report().0.is_empty()
+}
+
+/// Print the status of every dependency; returns the packages that are missing (required) and the
+/// names of the missing optional ones.
+fn report() -> (Vec<&'static str>, Vec<&'static str>) {
+    let mut missing = Vec::new();
+    let mut optional = Vec::new();
+    for d in DEPS {
+        let ok = present(&d.probe);
+        let tag = if ok { "ok" } else if d.optional { "--" } else { "MISSING" };
+        println!("[{tag}] {} ({}){}", d.name, d.purpose, if !ok && d.optional { format!(": {}", d.hint) } else { String::new() });
+        if !ok {
+            if d.optional {
+                optional.push(d.name);
+            } else {
+                missing.push(if cfg!(target_os = "macos") { d.brew } else { d.apt });
+            }
+        }
+    }
+    (missing, optional)
 }
 
 /// Package manager install command for this platform, as (display, program, args).

@@ -2,6 +2,32 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.4.5] - 2026-10-14
+### Changed
+- GUI Java console: the viewer's jars and native libraries are kept in `~/.config/bobcat/java-viewer/<ip>/` between sessions instead of being deleted and downloaded again every time. Each file is checked with its `ETag` (`If-None-Match`): the iDRAC8 answers `304 Not Modified` with no body, so a cached file costs one small request, and a firmware update that changes a file is picked up. The native libraries are only unpacked (and the macOS OpenSSL path patch applied) when they were downloaded or have not been unpacked yet. The launch file (`viewer.jnlp`, small, with a session-specific launch string) is still fetched each time. Delete the folder to force a fresh download. With `BOBCAT_DEBUG=1` a line says what came from the cache.
+
+## [1.4.4] - 2026-10-14
+### Removed
+- macOS Java console: the Fit window / Actual size menu tried in the first 1.4.4 build is gone. The Dell Java viewer has no way to turn its scaling off: its View menu only has Refresh, Fit (a plain action), Full Screen and Session User List; Tools > Session Options has three tabs (General, plus two whose names Java does not expose to the Accessibility API, so bobcat could not press them) and the "Scaling" page it lists is only "Maintain Aspect Ratio" for windowed and full-screen mode (Res_en.properties). The viewer always scales the server's picture to its window (a 1600-px-wide screen in the 1100-pt docked window is shown at 0.69x), which is also why Copy's OCR text is small. The Accessibility experiments are in RESEARCH.md.
+
+## [1.4.3] - 2026-10-14
+### Fixed
+- macOS Java Copy read the viewer's bottom information bar ("Current User(s): ...") and misread characters. The capture now leaves out the title bar (28 pt) and the information bar (26 pt; `BOBCAT_JAVA_COPY_CROP="top,bottom"` changes both) and is cleaned up before tesseract: grayscale, light-on-dark flipped to dark-on-light, enlarged 3x with bicubic smoothing, and tesseract keeps the column spacing (`preserve_interword_spaces`). Black-and-white thresholding was tried and dropped: on a real capture it cut the match with the true text from about 78% to 60% or less. With `BOBCAT_DEBUG=1` the raw and cleaned images are saved as `bobcat-java-copy-raw.png` and `-clean.png` in the temp folder.
+- macOS Java console docking: the page only reported its toolbar and status bar heights for HTML5, so for Java they were 0 and the docked viewer covered the whole window, buttons included. The page now reports them for Java too, and the dock waits for real heights before it moves the viewer.
+- macOS: with the viewer in front, the first click on the main window only activated it and was lost, and the dock then brought the viewer back to the front before a second click, so no toolbar button could be used. The main window now accepts the activating click (`acceptFirstMouse` in `tauri.conf.json`).
+### Added
+- macOS: **Paste** and **Copy** work on the Java console (`java_dock.rs`, commands `java_paste` and `java_copy_text`). Paste brings the viewer to the front and types the clipboard into it as real key presses (CGEvent, US layout, about 18 ms per character, Shift sent as its own key), the way a person would; it stops if the viewer loses the focus. It needs the Accessibility permission. Copy captures the viewer's console area with `screencapture` (needs the Screen Recording permission, requested the first time; restart bobcat after granting it), reads it with tesseract and puts the text on the clipboard, like HTML5 Copy on Linux. Both buttons show for Java on macOS only. Confirmed on hardware: Dell's viewer accepts the key presses and a pasted line arrived (docking works too). A longer paste with symbols and capitals also arrived intact. Copy (OCR quality, Screen Recording permission) is still to be tried.
+
+## [1.4.2] - 2026-10-14
+### Added
+- macOS: the Java console's window is docked over the console area of the main window (`java_dock.rs`). A foreign window cannot be made a child of ours, so bobcat uses the Accessibility API (the same permission that silences the viewer's keyboard warning; macOS asks the first time): it reads its own window's frame, moves and resizes the viewer's window to the area below the toolbar and above the status bar every 150 ms (so it follows moving and resizing), minimizes it with the main window, and brings it back to the front about 0.4 s after the main window was clicked (not while a mouse button is held), because the main window would otherwise cover it. The viewer's own title bar stays visible. Without the permission the viewer stays a free window and the status line says how to grant it. `BOBCAT_JAVA_DOCK=0` turns docking off; `BOBCAT_DEBUG=1` logs the frames. Untested on hardware.
+
+## [1.4.1] - 2026-10-14
+### Added
+- README: a comparison table of Bobcat against the iDRAC HTML5 viewer, the iDRAC Java viewer and a stock VNC client (Paste, Copy text, zoom, certificate pinning, keychain, enabling services, text-mode VNC, session release).
+### Changed
+- `bobcat-cli --check` on macOS: finds tools in the Homebrew folders (`/opt/homebrew/bin`, `/usr/local/bin`) even when PATH is minimal, reports whether Homebrew is installed, and on Apple Silicon whether Rosetta 2 is (the Intel-only Java viewer needs it). All platforms report whether a Java runtime is available for the GUI's Java console (`BOBCAT_JAVA`, the Java 8 the GUI downloaded into `~/.config/bobcat/java` on macOS, or `java` on the PATH elsewhere). These new checks are optional: they print `[--]` with a hint and do not make `--check` fail. `--check --install` also installs Rosetta 2 (`softwareupdate --install-rosetta --agree-to-license`) when it is missing; Homebrew and Java are not installed for you.
+
 ## [1.4.0] - 2026-10-14
 ### Changed
 - GUI: the VNC port field sits directly after Host with a colon between them (`host:port`); it was after User. Both are hidden for the other protocols as before.

@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "bobcat"
-version = "1.4.0"
+version = "1.4.5"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -365,6 +365,7 @@ dependencies = [
  "ctrlc",
  "flate2 1.1.10",
  "gtk",
+ "image",
  "javascriptcore-rs",
  "keyring",
  "objc2",

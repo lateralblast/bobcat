@@ -170,6 +170,16 @@ const down = new Map(); // e.code -> keysym currently held
 const key = (d, k) => invoke('send_key', { down: d, keysym: k });
 
 async function paste() {
+  if ($('proto').value === 'java') {
+    $('status').textContent = 'typing the clipboard into the Java console...';
+    try {
+      const n = await invoke('java_paste');
+      $('status').textContent = `pasted ${n} characters`;
+    } catch (err) {
+      $('status').textContent = `paste failed: ${err}`;
+    }
+    return;
+  }
   if ($('proto').value === 'html5') {
     try {
       const n = await invoke('html5_paste');
@@ -250,6 +260,16 @@ function setCopyMode(on) {
 $('copy').onclick = async () => {
   const p = $('proto').value;
   if (p === 'vnc') { setCopyMode(!copyMode); return; }
+  if (p === 'java') {
+    $('status').textContent = 'reading the Java console screen...';
+    try {
+      const text = await invoke('java_copy_text');
+      $('status').textContent = `copied ${text.length} characters: ${text.slice(0, 60).replace(/\n/g, ' ')}`;
+    } catch (err) {
+      $('status').textContent = `copy failed: ${err}`;
+    }
+    return;
+  }
   if (p === 'html5') {
     $('status').textContent = 'reading the console screen...';
     try {
@@ -438,6 +458,7 @@ function setProto() {
   hide('.login-only', kind === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
   hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
+  hide('.java-mac', kind === 'java' && !/Mac/.test(navigator.platform)); // Copy and Paste reach it only on macOS
   $('wrap').classList.toggle('hidden', kind !== 'vnc');
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');
@@ -458,7 +479,7 @@ setProto();
 // then only needs the height of its toolbar and status bar; tell the app so it can give the
 // rest of the window to the console.
 function reportLayout() {
-  if ($('proto').value !== 'html5') return;
+  if ($('proto').value !== 'html5' && $('proto').value !== 'java') return; // views placed over the console area
   invoke('html5_layout', { height: Math.ceil($('bar').offsetHeight + $('statusbar').offsetHeight), bar: Math.ceil($('bar').offsetHeight) });
 }
 new ResizeObserver(reportLayout).observe($('bar'));

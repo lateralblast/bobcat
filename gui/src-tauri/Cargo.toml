@@ -1,6 +1,6 @@
 [package]
 name = "bobcat"
-version = "1.4.0"
+version = "1.4.5"
 edition = "2021"
 license = "CC-BY-NC-SA-4.0"
 
@@ -36,3 +36,4 @@ objc2 = "0.6"
 block2 = "0.6"
 security-framework = "3"
 core-foundation = "0.10"
+image = { version = "0.25", default-features = false, features = ["png"] }

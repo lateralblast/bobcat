@@ -895,6 +895,12 @@ pub fn disconnect_html5(app: AppHandle) {
     disconnect_in_background(&app);
 }
 
+/// The toolbar height, and the toolbar plus status bar height, as the page last reported them.
+#[cfg(target_os = "macos")]
+pub(crate) fn layout_heights() -> (f64, f64) {
+    (BAR_HEIGHT.load(Ordering::SeqCst).max(0) as f64, TOP_HEIGHT.load(Ordering::SeqCst).max(0) as f64)
+}
+
 /// The main page reports how tall its toolbar and status bar are, so the console view can take
 /// the rest of the window.
 #[tauri::command]

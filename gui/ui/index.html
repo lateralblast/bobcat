@@ -62,8 +62,8 @@
     <button id="stop">Disconnect</button>
   </div>
   <div class="row">
-    <button class="no-java" id="copy" title="Drag to select text on screen">Copy</button>
-    <button class="no-java" id="paste" title="Ctrl+Shift+V">Paste</button>
+    <button class="java-mac" id="copy" title="Drag to select text on screen">Copy</button>
+    <button class="java-mac" id="paste" title="Ctrl+Shift+V">Paste</button>
     <button class="no-html5 no-java" id="kbd">Keyboard</button>
     <button id="certbtn">Certificate</button>
     <button class="vnc-only" id="cad">Ctrl+Alt+Del</button>
@@ -80,7 +80,7 @@
 </div>
 <div id="term" class="hidden"></div>
 <div id="html5note" class="hidden"><p>The iDRAC HTML5 console appears here when you connect.</p><p>Disconnect (or closing the app) logs the session out of the iDRAC.</p></div>
-<div id="javanote" class="hidden"><p>The iDRAC Java console opens in a window of its own when you connect (the iDRAC must use the Java plugin: <code>bobcat-cli --enable java</code>).</p><p>Close its window, or Disconnect, to end the session.</p></div>
+<div id="javanote" class="hidden"><p>The iDRAC Java console is a window of its own (the iDRAC must use the Java plugin: <code>bobcat-cli --enable java</code>). On macOS bobcat docks it here, over this area; that needs the Accessibility permission.</p><p>Close its window, or Disconnect, to end the session.</p></div>
 <div id="wrap"><canvas id="cv" width="640" height="480" tabindex="0"></canvas></div>
 <div id="statusbar"><span id="status" title="Connection status">idle</span></div>
 <div id="sel"></div>

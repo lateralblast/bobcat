@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.4.0
+Version: 1.4.5
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -56,7 +56,7 @@ use, saved in `~/.config/bobcat/known_certs.json`, shared with `bobcat`) and the
 change. `--trust-new-hostkey` accepts a changed key or certificate.
 
 **Packages.** `bobcat-cli --check` verifies that `ipmitool`, `tesseract` and the GUI's libraries are installed;
-add `--install` to install missing ones with apt (sudo prompts for its own password) or, on macOS, Homebrew.
+add `--install` to install missing ones with apt (sudo prompts for its own password) or, on macOS, Homebrew (and Rosetta 2 on Apple Silicon). It also reports, without failing, whether Homebrew, Rosetta 2 (macOS) and a Java runtime (for the GUI's Java console) are present.
 
 ## bobcat
 
@@ -80,8 +80,8 @@ and password; SSH and SOL show a terminal.
   The console is Dell's own page, so its keyboard, mouse and menus are Dell's. Bobcat's **Copy** (reads the
   screen with OCR; needs `tesseract-ocr`), **Paste** (types your clipboard in, US layout) and **text size**
   (zoom) buttons work on it and sit on the second toolbar row beside Certificate; the on-screen keyboard is not used.
-- **Java** (macOS and 64-bit Linux): logs in, downloads Dell's viewer from the iDRAC over the pinned connection and
-  runs it with `java`, in a window of its own (it cannot be embedded). The Java viewer must be selected on the iDRAC
+- **Java** (macOS and 64-bit Linux): logs in, downloads Dell's viewer from the iDRAC over the pinned connection (once; later sessions reuse the copy in `~/.config/bobcat/java-viewer/<ip>/` unless the iDRAC's files changed) and
+  runs it with `java`, in a window of its own (it cannot be embedded; on macOS, with the Accessibility permission, bobcat docks that window over the console area of the main window and keeps it there as the window moves or is resized, and its **Paste** (types your clipboard in as key presses) and **Copy** (reads the screen with OCR; needs the Screen Recording permission) buttons work; `BOBCAT_JAVA_DOCK=0` turns this off). The Java viewer must be selected on the iDRAC
   (`bobcat-cli --enable java`). On macOS the viewer's native libraries are Intel-only, so it needs an x86_64 Java 8:
   the first time, bobcat asks and then downloads Azul Zulu 8 into `~/.config/bobcat/java` (checksum checked, nothing
   installed system-wide; Rosetta 2 is needed on Apple Silicon). `BOBCAT_JAVA=<path to java>` uses another runtime
@@ -106,6 +106,26 @@ and password; SSH and SOL show a terminal.
   consoles); in SSH/SOL it copies the selection, or the whole visible screen.
 - **Text size:** the drop-down zooms the console; **Fit window** scales it to the window.
 - Closing the window (or Ctrl+C) hangs up SSH and SOL sessions cleanly so the iDRAC releases them.
+
+## How Bobcat compares
+
+What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means the viewer has no such feature as found on an iDRAC8 (not taken from Dell's documentation, and newer firmware or other viewers may differ); a stock VNC client is any ordinary VNC viewer connected to the iDRAC's VNC server, where features depend on the client.
+
+| | Bobcat | iDRAC HTML5 viewer (browser) | iDRAC Java viewer | Stock VNC client |
+|---|---|---|---|---|
+| **Paste** your clipboard into the console | Yes: VNC, HTML5, SSH, SOL (Ctrl+Shift+V); Java on macOS | Not offered | Not offered | Client-dependent |
+| **Copy text** from the console screen | Yes: drag over the text, read with OCR (VNC; HTML5 on Linux; Java on macOS); terminal selection (SSH, SOL) | Not offered | Not offered | Not offered (a screen is pixels) |
+| Server clipboard text to your clipboard | Yes (VNC) | Not offered | Not offered | Client-dependent |
+| **Text size** zoom and **Fit window** | Yes (VNC, HTML5) | Browser zoom only | Viewer scaling | Client-dependent |
+| On-screen keyboard (US, UK, DE, FR) | Yes (VNC, SSH, SOL) | Dell's own | Dell's own | Client-dependent |
+| Several console types in one app | VNC, HTML5, Java, SSH, SOL | HTML5 only | Java only | VNC only |
+| Embedded in the main window | VNC, HTML5, SSH, SOL (Java in its own window) | A browser tab | Its own window | Its own window |
+| Certificate checking | Pinned on first use for web, VNC TLS and SSH; a change blocks the connection | Browser warning each time for a self-signed certificate | The viewer's own warning dialog | Client-dependent |
+| Password in the OS keychain | Yes (Remember), shared with the CLI | Browser password manager | No | Client-dependent |
+| Turn the console services on (VNC, HTML5, Java, SOL) | Yes: `bobcat-cli --enable ...` over SSH/racadm | In the iDRAC web interface | In the iDRAC web interface | No |
+| Screen as **text** in a terminal | Yes: `bobcat-cli --console vnc` | No | No | No |
+| Session released when you disconnect | Yes (graceful logout; closing the app, Ctrl+C and SIGTERM too) | When the tab closes cleanly | Only when its window is closed | Client-dependent |
+| Needs | Nothing extra for VNC, HTML5, SSH, SOL; Java 8 (downloaded for you) for the Java console | A browser | A Java runtime, and Rosetta 2 on Apple Silicon | A VNC client |
 
 ## Building installers
 
@@ -144,7 +164,7 @@ The Java viewer shows this warning when it starts:
 > Virtual Console application requires direct access to your keyboard. You can enable this in System Preferences -> Universal Access and select "Enable access for assistive devices" option.
 > If this option is not enabled, the typed characters are passed to the managed system, but not all keyboard functions will work properly, and Single Cursor mode cannot be enabled.
 
-Typed text still reaches the server. Bobcat cannot set the option itself: on current macOS it is the Accessibility permission (System Settings > Privacy & Security > Accessibility), which only the user can grant. Whether granting it removes the warning is not yet confirmed (the library may be failing to load for another reason); this is an open item in `TODO.md`.
+Typed text still reaches the server. Bobcat cannot set the option itself: on current macOS it is the Accessibility permission (System Settings > Privacy & Security > Accessibility), which only the user can grant. Granting it to Bobcat removes the warning (confirmed on macOS). The viewer has no clipboard paste of its own; on macOS Bobcat's Paste types into it with the same permission.
 
 ## License
 

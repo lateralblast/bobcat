@@ -5,6 +5,8 @@
 mod html5;
 mod html5_tools;
 mod java_console;
+#[cfg(target_os = "macos")]
+mod java_dock;
 mod keychain;
 
 use std::collections::HashMap;
@@ -916,11 +918,17 @@ fn paste_clipboard(state: State<Session>) -> Result<usize, String> {
 
 /// OCR a PNG with the `tesseract` CLI and put the text on the local clipboard.
 pub(crate) fn ocr_png_to_clipboard(png: &[u8]) -> Result<String, String> {
+    ocr_png_to_clipboard_args(png, &[])
+}
+
+/// Same, with extra tesseract arguments.
+pub(crate) fn ocr_png_to_clipboard_args(png: &[u8], extra: &[&str]) -> Result<String, String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let mut child = Command::new("tesseract")
         .args(["stdin", "stdout", "--psm", "6"])
+        .args(extra)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1012,7 +1020,7 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat");
 }
