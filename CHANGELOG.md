@@ -2,6 +2,14 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.8.6] - 2026-10-14
+### Added
+- `--check`/`--install` on RPM distributions: the package manager is chosen from `ID`/`ID_LIKE` in `/etc/os-release` (apt, dnf, zypper; else whichever is installed) and each dependency has Fedora (`webkit2gtk4.1`, `gtk3`, `tesseract`, `rpm-build`) and openSUSE package names. The library probe also tries `/sbin/ldconfig` and `/usr/sbin/ldconfig`, which a normal user's PATH lacks on those distributions. Checked in a Fedora 42 container: `--check` names the dnf packages and `--check --install` installs them.
+- `--amt-redir-test BRIDGE` warns when the AMT device reports this machine's host name: a viewer on the machine being captured shows its own window inside the screen (cascading copies, seen on the 192.168.9.238 device, which gives a live 3840x2160 picture).
+- `--console ssh` follows the local terminal's size: a change is sent to the iDRAC as a window-change request (retried if the non-blocking channel would block). Not yet tried against an iDRAC.
+### Notes
+- `build.sh --target deb` and `--target rpm` build; the deb installs on Ubuntu 24.04 and the rpm on Fedora 42 (containers), both with no missing libraries.
+
 ## [1.8.5] - 2026-10-14
 ### Fixed
 - AMT KVM bridge: the first compressed RLE tile of a session starts with a zlib header (`78 9c`), then an ordinary raw-deflate stream (seen on the real device: `78 9c 00 03 00 fc ff 01 00 00` = header, stored block of 3 bytes, solid tile colour 0x0000). The header is now skipped once, at the start of the stream; before, the decoder stopped with `bad deflate data` on the first tile. Checked against the mock with a zlib header on its first compressed chunk. The failing tile also showed what the device sees: a solid black tile at 800x600.

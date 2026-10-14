@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.8.5
+Version: 1.8.6
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -82,7 +82,7 @@ use, saved in `~/.config/bobcat/known_certs.json`, shared with `bobcat`) and the
 change. `--trust-new-hostkey` accepts a changed key or certificate.
 
 **Packages.** `bobcat-cli --check` verifies that `ipmitool`, `tesseract` and the GUI's libraries are installed;
-add `--install` to install missing ones (and `rpmbuild`) with apt (sudo prompts for its own password) or, on macOS, Homebrew (and Rosetta 2 on Apple Silicon). It also reports, without failing, whether Homebrew, Rosetta 2 (macOS), `rpmbuild` (Linux, only for `build.sh --package rpm`) and a Java runtime (for the GUI's Java console) are present.
+add `--install` to install missing ones (and `rpmbuild`) with the platform's package manager (apt, dnf or zypper chosen from `/etc/os-release`; sudo prompts for its own password) or, on macOS, Homebrew (and Rosetta 2 on Apple Silicon). It also reports, without failing, whether Homebrew, Rosetta 2 (macOS), `rpmbuild` (Linux, only for `build.sh --package rpm`) and a Java runtime (for the GUI's Java console) are present.
 
 ## bobcat
 

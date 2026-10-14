@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.8.5
+// Version: 1.8.6
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -468,6 +468,10 @@ struct Dep {
     probe: Probe,
     /// Debian/Ubuntu package that provides it
     apt: &'static str,
+    /// Fedora/RHEL (dnf) package
+    dnf: &'static str,
+    /// openSUSE (zypper) package
+    zypper: &'static str,
     /// Homebrew formula (macOS)
     brew: &'static str,
     purpose: &'static str,
@@ -481,6 +485,8 @@ const DEPS: &[Dep] = &[
         name: "ipmitool",
         probe: Probe::Bin("ipmitool"),
         apt: "ipmitool",
+        dnf: "ipmitool",
+        zypper: "ipmitool",
         brew: "ipmitool",
         purpose: "--console sol",
         optional: false,
@@ -490,6 +496,8 @@ const DEPS: &[Dep] = &[
         name: "tesseract",
         probe: Probe::Bin("tesseract"),
         apt: "tesseract-ocr",
+        dnf: "tesseract",
+        zypper: "tesseract-ocr",
         brew: "tesseract",
         purpose: "--console vnc, GUI: Copy (OCR)",
         optional: false,
@@ -500,6 +508,8 @@ const DEPS: &[Dep] = &[
         name: "WebKitGTK 4.1",
         probe: Probe::Lib("libwebkit2gtk-4.1.so.0"),
         apt: "libwebkit2gtk-4.1-0",
+        dnf: "webkit2gtk4.1",
+        zypper: "libwebkit2gtk-4_1-0",
         brew: "",
         purpose: "GUI: window rendering",
         optional: false,
@@ -510,6 +520,8 @@ const DEPS: &[Dep] = &[
         name: "GTK 3",
         probe: Probe::Lib("libgtk-3.so.0"),
         apt: "libgtk-3-0",
+        dnf: "gtk3",
+        zypper: "libgtk-3-0",
         brew: "",
         purpose: "GUI: window toolkit",
         optional: false,
@@ -520,6 +532,8 @@ const DEPS: &[Dep] = &[
         name: "Homebrew",
         probe: Probe::Bin("brew"),
         apt: "",
+        dnf: "",
+        zypper: "",
         brew: "",
         purpose: "needed only for --install",
         optional: true,
@@ -530,6 +544,8 @@ const DEPS: &[Dep] = &[
         name: "Rosetta 2",
         probe: Probe::Rosetta,
         apt: "",
+        dnf: "",
+        zypper: "",
         brew: "",
         purpose: "GUI: Java console (Intel-only viewer)",
         optional: true,
@@ -540,22 +556,26 @@ const DEPS: &[Dep] = &[
         name: "rpmbuild",
         probe: Probe::Bin("rpmbuild"),
         apt: "rpm",
+        dnf: "rpm-build",
+        zypper: "rpm-build",
         brew: "",
         purpose: "build.sh --package rpm",
         optional: true,
-        hint: "sudo apt install rpm (Fedora: dnf install rpm-build), or --check --install",
+        hint: "sudo apt install rpm (Fedora/openSUSE: rpm-build), or --check --install",
     },
     Dep {
         name: "Java runtime",
         probe: Probe::Java,
         apt: "",
+        dnf: "",
+        zypper: "",
         brew: "",
         purpose: "GUI: Java console",
         optional: true,
         hint: if cfg!(target_os = "macos") {
             "the GUI downloads Java 8 on first use (or set BOBCAT_JAVA)"
         } else {
-            "install Java 8 or later (e.g. sudo apt install default-jre) or set BOBCAT_JAVA"
+            "install Java 8 or later (apt: default-jre, dnf: java-latest-openjdk, zypper: java-17-openjdk) or set BOBCAT_JAVA"
         },
     },
 ];
@@ -574,11 +594,14 @@ fn present(probe: &Probe) -> bool {
             dirs.iter().any(|d| d.join(b).is_file())
         }
         #[cfg(target_os = "linux")]
-        Probe::Lib(l) => std::process::Command::new("ldconfig")
-            .arg("-p")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains(l))
-            .unwrap_or(false),
+        // ldconfig is in /sbin, which a normal user's PATH lacks on Fedora and openSUSE
+        Probe::Lib(l) => ["ldconfig", "/sbin/ldconfig", "/usr/sbin/ldconfig"].iter().any(|ld| {
+            std::process::Command::new(ld)
+                .arg("-p")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains(l))
+                .unwrap_or(false)
+        }),
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         Probe::Rosetta => std::path::Path::new("/Library/Apple/usr/share/rosetta/rosetta").exists(),
         Probe::Java => {
@@ -644,28 +667,83 @@ fn report() -> (Vec<&'static str>, Vec<&'static str>, Vec<&'static str>) {
         if !ok {
             if d.optional {
                 optional.push(d.name);
-                let pkg = if cfg!(target_os = "macos") { d.brew } else { d.apt };
+                let pkg = pkg_name(d);
                 if !pkg.is_empty() {
                     extra.push(pkg);
                 }
             } else {
-                missing.push(if cfg!(target_os = "macos") { d.brew } else { d.apt });
+                missing.push(pkg_name(d));
             }
         }
     }
     (missing, optional, extra)
 }
 
-/// Package manager install command for this platform, as (display, program, args).
-fn installer() -> (&'static str, &'static str, &'static [&'static str]) {
+#[derive(Clone, Copy, PartialEq)]
+enum PkgMgr {
+    Apt,
+    Dnf,
+    Zypper,
+    Brew,
+}
+
+/// The platform's package manager: Homebrew on macOS; on Linux from `ID`/`ID_LIKE` in /etc/os-release
+/// (Debian-like: apt, Fedora/RHEL-like: dnf, openSUSE-like: zypper), else whichever is installed.
+fn pkg_mgr() -> PkgMgr {
     if cfg!(target_os = "macos") {
-        ("brew install", "brew", &["install"])
+        return PkgMgr::Brew;
+    }
+    let ids = std::fs::read_to_string("/etc/os-release")
+        .or_else(|_| std::fs::read_to_string("/usr/lib/os-release"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with("ID=") || l.starts_with("ID_LIKE="))
+        .flat_map(|l| l.split_once('=').map(|(_, v)| v.trim_matches('"').to_string()))
+        .flat_map(|v| v.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    pkg_mgr_from(&ids, |b| present(&Probe::Bin(b)))
+}
+
+fn pkg_mgr_from(ids: &[String], have: impl Fn(&'static str) -> bool) -> PkgMgr {
+    for id in ids {
+        match id.as_str() {
+            "debian" | "ubuntu" => return PkgMgr::Apt,
+            "fedora" | "rhel" | "centos" => return PkgMgr::Dnf,
+            "suse" | "opensuse" | "sles" => return PkgMgr::Zypper,
+            _ => {}
+        }
+    }
+    if have("apt-get") {
+        PkgMgr::Apt
+    } else if have("dnf") {
+        PkgMgr::Dnf
+    } else if have("zypper") {
+        PkgMgr::Zypper
     } else {
-        ("sudo apt install", "apt-get", &["install", "-y"])
+        PkgMgr::Apt
     }
 }
 
-/// Install packages with apt-get. sudo (if needed) prompts on the terminal
+fn pkg_name(d: &Dep) -> &'static str {
+    match pkg_mgr() {
+        PkgMgr::Brew => d.brew,
+        PkgMgr::Apt => d.apt,
+        PkgMgr::Dnf => d.dnf,
+        PkgMgr::Zypper => d.zypper,
+    }
+}
+
+/// Package manager install command for this platform, as (display, program, args).
+fn installer() -> (&'static str, &'static str, &'static [&'static str]) {
+    match pkg_mgr() {
+        PkgMgr::Brew => ("brew install", "brew", &["install"]),
+        PkgMgr::Apt => ("sudo apt install", "apt-get", &["install", "-y"]),
+        PkgMgr::Dnf => ("sudo dnf install", "dnf", &["install", "-y"]),
+        PkgMgr::Zypper => ("sudo zypper install", "zypper", &["--non-interactive", "install"]),
+    }
+}
+
+/// Install packages with the platform package manager (apt-get, dnf, zypper or brew). sudo (if needed) prompts on the terminal
 /// itself, so bobcat-cli never sees the sudo password.
 fn apt_install(pkgs: &[&str]) -> Result<(), String> {
     use std::process::Command;
@@ -855,9 +933,24 @@ fn console_ssh(ip: &str, user: &str, pass: &str, trust_new: bool) -> Result<(), 
     let mut buf = vec![0u8; 8192];
     let mut line_start = true; // for the ~. escape
     let mut tilde = false;
+    // tell the iDRAC when the local terminal is resized (a window-change request; the channel is
+    // non-blocking, so a request that would block is kept and retried on the next pass)
+    let mut size = (cols, rows);
+    let mut resize_pending = false;
     let end = 'run: loop {
         if signaled() {
             break End::Signal;
+        }
+        let now = term_size();
+        if now != size {
+            size = now;
+            resize_pending = true;
+        }
+        if resize_pending {
+            resize_pending = ch
+                .request_pty_size(size.0, size.1, None, None)
+                .err()
+                .is_some_and(|e| std::io::Error::from(e).kind() == std::io::ErrorKind::WouldBlock);
         }
         // server -> terminal
         match ch.read(&mut buf) {
@@ -1155,6 +1248,9 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
     if let Some(p) = &args.amt_redir_test {
         if p.eq_ignore_ascii_case("bridge") {
             // the KVM bridge on its own, for any VNC viewer
+            if device.is_this_machine() {
+                eprintln!("warning: the AMT device reports this machine's host name; a viewer on this machine shows its own window inside the captured screen (cascading copies). View it from another machine or on a second display.");
+            }
             let local = amt_redir::kvm_bridge(&args.ip, 16994, &args.user, pass)?;
             println!("AMT KVM bridged to 127.0.0.1:{local}: connect a VNC viewer there (Ctrl+C stops)");
             loop {

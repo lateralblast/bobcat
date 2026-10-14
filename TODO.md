@@ -18,7 +18,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI: non-US keyboard layouts for paste (1.5.3; untested on hardware: follows the Layout selector for VNC and HTML5)
 - [x] `--check` for required packages (0.1.3)
 - [x] `--check --install` via apt-get (0.1.4)
-- [ ] `--check`/`--install`: support non-apt distros' package names (dnf/zypper; only apt and Homebrew are handled, so on an RPM distribution install the packages by hand)
+- [x] `--check`/`--install`: dnf and zypper package names (1.8.6; Fedora 42 container checked, openSUSE names untested)
 - [x] `--check`/`--install` on macOS: skip Linux-only GUI probes, use Homebrew (1.2.0)
 - [x] GUI on-screen keyboard (0.2.1; untested on hardware)
 - [x] GUI: TLS for encrypted iDRAC VNC (0.3.0; verified on hardware)
@@ -30,7 +30,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] `--enable sol` (0.9.1; verified read path, nothing needed changing)
 - [x] `--console sol` via ipmitool (0.9.2)
 - [x] `--console ssh` (iDRAC SSH `console com2`) without ipmitool (0.9.3)
-- [ ] `--console`: resize the remote terminal when the local window is resized
+- [~] `--console`: resize the remote terminal when the local window is resized (1.8.6: done for `--console ssh`, untested on an iDRAC; `--console sol` runs ipmitool, which handles its own terminal)
 - [x] GUI: SSH console and SOL via a Protocol drop-down (0.9.4; SSH verified, SOL untested in the GUI)
 - [x] GUI: verify the SSH host key for the SSH console (0.9.6)
 - [x] `--console vnc` text view with keyboard input, `--tls`/`--notls` (1.0.5; verified on the TrueNAS Linux console)
@@ -47,7 +47,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [ ] Our own client for Dell's KVM protocol (the one the Java viewer `avctKVM.jar` speaks), drawn in the main window like VNC: no Java, no Rosetta (the viewer's native libraries `libavctKVMIO`/`libVMAPI_DLL` are Intel-only and hold its OpenSSL, and probably video and keyboard code), a true embedded view, virtual media possible, keyboard without the Accessibility permission. Large: needs the protocol worked out from the jar (and the native code) and from traffic. Replaces the docked-window idea above and the Java runtime download. Start with a study of what the viewer sends after login (RESEARCH.md).
 - [~] GUI: HTML5 virtual media (works on Linux: an ISO was mapped and read from the server, 1.5.5; 1.5.6 ends a mapped session on Disconnect (confirmed on Linux); still to try: an `.img` removable disk, macOS, and the Java console's virtual media is a separate item). Earlier notes (1.5.4: vmPriv=true shows Dell's Virtual Media button; file dialog and the viewer's virtual media session work on Linux, 1.5.5 works around the missing `change` event; untested: mapping an ISO and seeing it from the server, unmapping/disconnect cleanup, macOS, the same for the CLI is not planned)
 - [x] `bobcat-cli --disconnect list|media|iso|gui|vc|ssh|sol|sessions|all` (1.5.7-1.5.9; racadm commands not yet run against an iDRAC; other session types such as IPMI/Redfish need their names from a real listing)
-- [~] Intel AMT: CLI info, power and KVM enable/disable done (1.6.0, mock-tested; not yet run on the real device at 192.168.10.69). `--enable vnc` is refused by the firmware on the test device (RFBPassword and Is5900PortEnabled answer UnsupportedFeature, RESEARCH.md), so the KVM needs the 16994 redirection protocol. 1.7.0-1.7.9 add the redirection client (digest auth, works on the device) and a KVM RFB bridge (start, RFB 3.8 opening, Raw-only with 565->viewer conversion all work; the test device sends a black screen and drops the connection on any key or pointer input, probably because it has no usable video source; needs a machine with a working AMT KVM to finish and check input). Open: checking that, then SOL as a text console, IDER (virtual media), TLS (16993), SOL and IDER (virtual media) over the 16994 redirection protocol, a GUI protocol entry, boot-source control
+- [~] Intel AMT: CLI info, power and KVM enable/disable done (1.6.0, mock-tested; not yet run on the real device at 192.168.10.69). `--enable vnc` is refused by the firmware on the test device (RFBPassword and Is5900PortEnabled answer UnsupportedFeature, RESEARCH.md), so the KVM needs the 16994 redirection protocol. 1.7.0-1.7.9 add the redirection client (digest auth, works on the device) and a KVM RFB bridge (start, RFB 3.8 opening, Raw-only with 565->viewer conversion all work; the first test device sent a black screen and dropped the connection on any input, probably no video source; the second, 192.168.9.238 (AMT 12.0.97.3000, the user's workstation), gives a live 3840x2160 picture, 1.8.6 warns when viewing it from the machine itself, which cascades; still to check from another machine: update speed and whether input keeps the session). Open: checking that, then SOL as a text console, IDER (virtual media), TLS (16993), SOL and IDER (virtual media) over the 16994 redirection protocol, a GUI protocol entry, boot-source control
 - [ ] A `--console html5` for the CLI
 - [x] GUI: HTML5 embedded view on macOS (1.3.0; frame-based layout between the toolbar and status bar; needs more testing)
 - [ ] GUI: HTML5 embedded view on Windows (other platforms still use the separate window)
@@ -57,7 +57,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
 - [ ] GUI HTML5: on-screen keyboard through the same key events
 - [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried and working, including the Local Network permission)
-- [ ] build.sh: install-test the deb and rpm (both build on Ubuntu with `--package deb|rpm`; installing and running them is untried) and build the rpm on an RPM distribution
+- [~] build.sh: install-test the deb and rpm (1.8.6: the deb installs on Ubuntu 24.04 and the rpm on Fedora 42 in containers with no missing libraries; the GUI was not started there; still to do: build the rpm on an RPM distribution)
 - [x] `build.sh --target deb` / `--package deb|rpm|appimage|all` (1.4.7; deb builds on Linux, install not tried)
 - [ ] build.sh: test `--target windows` (`--target linux` builds the distribution's package on Ubuntu, 1.5.2), `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console
 - [x] `build.sh --delete-release [<version>]` (1.4.9; untried against GitHub, `--dry-run` first)
