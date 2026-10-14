@@ -4,7 +4,10 @@ All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0
 
 ## [1.4.6] - 2026-10-14
 ### Added
+- README: screenshots of the app (VNC, HTML5 and Java views; `docs/img/`, taken with the documentation address 192.0.2.10 and no password) and of the macOS installer.
 - `build.sh --release [--draft] [--yes] [--dry-run]`: tags the commit `v<version>`, pushes the tag and creates the GitHub release (`gh`) with the installers in `dist/` for that version; the release notes are that version's section of this file. It can follow a build (`--target mac --release`) or run alone on what is already in `dist/`. If the release exists, the files are added to it, so each platform can be built and added from its own machine. It never commits: it stops unless the working tree is committed and HEAD is pushed, refuses a tag that already points at another commit, asks before it does anything (`--yes` skips the question) and `--dry-run` only prints the commands. Only `--dry-run` has been run.
+### Changed
+- GUI: the HTML5 and Java notes (shown before connecting) are centred with a readable width, and the command in them no longer breaks across lines.
 
 ## [1.4.5] - 2026-10-14
 ### Changed

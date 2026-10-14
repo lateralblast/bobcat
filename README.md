@@ -60,6 +60,16 @@ add `--install` to install missing ones with apt (sudo prompts for its own passw
 
 ## bobcat
 
+![The Bobcat app: the VNC console view](docs/img/app-vnc.png)
+
+*The desktop app (macOS shown). The toolbar picks the protocol (VNC, HTML5, Java, SSH or SOL), the host and login, and the second row has Copy, Paste, the on-screen keyboard, the certificate button and text size.*
+
+| HTML5 console | Java console |
+|---|---|
+| ![The HTML5 view](docs/img/app-html5.png) | ![The Java view](docs/img/app-java.png) |
+
+*HTML5 and Java views before connecting. The HTML5 console opens inside this window under the toolbar; on macOS the Java console's own window is docked over the same area.*
+
 ```
 cd gui/src-tauri
 BOBCAT_VNC_PASS='<vnc password>' cargo run
@@ -140,6 +150,10 @@ What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means th
 release with the installers in `dist/` for that version (needs `gh`, logged in; notes come from `CHANGELOG.md`). Run it on each
 platform's machine to add that platform's files to the same release. It never commits: commit and push first. `--draft`
 makes a draft release, `--dry-run` shows what it would do, `--yes` skips the question.
+
+![The macOS installer: drag bobcat to Applications](docs/img/installer-dmg.png)
+
+*The macOS installer (`bobcat_<version>_<arch>.dmg`): drag bobcat onto Applications.*
 
 Needs the Rust toolchain and `cargo install tauri-cli --version '^2'` (and `perl` for the bundled OpenSSL). Each target
 must be built on its own platform. The macOS app is not signed or notarized: on first launch right-click it and choose
