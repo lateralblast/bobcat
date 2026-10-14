@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.5.2
+Version: 1.5.9
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -19,6 +19,7 @@ Tested against an iDRAC8; the settings it changes are named in `CHANGELOG.md` an
 bobcat-cli --ip <iDRAC IP> --user <username> [--check [--install]]
            [--console sol|ssh|vnc [--tls|--notls] [--relearn]]
            [--enable vnc|html5|java|sol [--port 5901] [--sslebl Disabled] [--timeout 300]] [--disable vnc]
+           [--disconnect list|media|iso|gui|vc|ssh|sol|sessions|all]
 ```
 
 **Credentials** are kept off the command line where possible. Omit `--pass` to be prompted, or set `BOBCAT_PASS`
@@ -32,6 +33,19 @@ process arguments (`--pass` and `--vncpass` do, if you use them).
 | `--enable vnc` | Sets the VNC password (prompted, `--vncpass` or `BOBCAT_VNC_PASS`; 1-8 alphanumeric characters), port (`--port`), SSL encryption (`--sslebl`) and idle timeout (`--timeout`), and enables the VNC server. `--disable vnc` turns it off. |
 | `--enable html5` / `java` | Enables the virtual console and selects the HTML5 or Java viewer. |
 | `--enable sol` | Enables IPMI over LAN, Serial over LAN and serial redirection. BIOS changes are staged for the next reboot; `bobcat-cli` never reboots the server. |
+
+**End sessions** (over SSH, using `racadm`):
+
+| Option | Effect |
+|---|---|
+| `--disconnect media` (alias `iso`, `vm`) | Disconnects virtual media (`racadm vmdisconnect`, then `racadm remoteimage -d`), e.g. when a console was closed with an image still mapped and the iDRAC says "Virtual Media is currently unavailable"; also closes any session listed as Virtual Media. A comma list such as `gui,vc` combines them. |
+| `--disconnect list` | Shows the iDRAC's sessions (`racadm getssninfo`) and ends nothing. |
+| `--disconnect gui` | Closes the web interface (GUI) sessions, by session ID (`racadm closessn -i`). |
+| `--disconnect vc` (alias `console`) | Closes the Virtual Console sessions (HTML5, Java). |
+| `--disconnect ssh` | Closes the SSH sessions; the one `bobcat-cli` runs in cannot be closed and is left. |
+| `--disconnect sol` | Closes the sessions the iDRAC lists as `SOL`: Serial over LAN (`--console sol`) and the serial console opened over SSH (`--console ssh`, `console com2`); the iDRAC lists both the same way. |
+| `--disconnect sessions` | Closes every other iDRAC session (web, virtual console, virtual media) with `racadm closessn -a`. |
+| `--disconnect all` | Both, media first. |
 
 **Consoles:**
 

@@ -16,10 +16,11 @@ use tauri::{AppHandle, Manager};
 use crate::html5::LABEL;
 
 /// JavaScript that types `text` into the viewer, US layout, as real-looking key events.
-fn paste_script(text: &str) -> String {
+fn paste_script(text: &str, keys: Option<&[PasteKey]>) -> String {
     let json = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
+    let keys_json = keys.map(|k| serde_json::to_string(k).unwrap_or_else(|_| "null".into())).unwrap_or_else(|| "null".into());
     format!(
-        r#"(async function (text) {{
+        r#"(async function (text, keys) {{
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const SHIFTED = '~!@#$%^&*()_+{{}}|:"<>?';
   const UNSHIFT = {{ '~': '`', '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
@@ -44,9 +45,14 @@ fn paste_script(text: &str) -> String {
     window.dispatchEvent(e);
   }}
   const SHIFT = {{ key: 'Shift', code: 'ShiftLeft', keyCode: 16, shift: true }};
-  for (const ch of text) {{
-    const o = info(ch);
-    if (!o) continue;
+  // keys (worked out for the selected keyboard layout) or the US layout
+  const list = [];
+  if (keys) {{
+    for (let i = 0; i < keys.length; i++) list.push({{ key: keys[i].key, code: keys[i].code, keyCode: keys[i].key_code, shift: keys[i].shift }});
+  }} else {{
+    for (const ch of text) {{ const o = info(ch); if (o) list.push(o); }}
+  }}
+  for (const o of list) {{
     if (o.shift) fire('keydown', SHIFT);
     fire('keydown', o);
     fire('keypress', o);
@@ -54,23 +60,37 @@ fn paste_script(text: &str) -> String {
     if (o.shift) fire('keyup', SHIFT);
     await sleep(12);
   }}
-}})({json});"#
+}})({json}, {keys_json});"#
     )
 }
 
 #[tauri::command]
-pub fn html5_paste(app: AppHandle) -> Result<usize, String> {
-    paste_from_clipboard(&app)
+pub fn html5_paste(app: AppHandle, keys: Option<Vec<PasteKey>>) -> Result<usize, String> {
+    paste_keys(&app, keys)
+}
+
+/// One key press worked out by the page for the selected keyboard layout.
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct PasteKey {
+    key: String,
+    code: String,
+    key_code: u32,
+    shift: bool,
 }
 
 pub fn paste_from_clipboard(app: &AppHandle) -> Result<usize, String> {
+    paste_keys(app, None)
+}
+
+/// Type the clipboard into the console: with `keys` from the page (selected layout), else as US keys.
+pub fn paste_keys(app: &AppHandle, keys: Option<Vec<PasteKey>>) -> Result<usize, String> {
     let text = crate::with_clip(|c| c.get_text())?;
-    let n = text.chars().count();
+    let n = keys.as_ref().map(|k| k.len()).unwrap_or_else(|| text.chars().count());
     if n > 10_000 {
         return Err(format!("clipboard too large ({n} characters, max 10000)"));
     }
     let wv = app.get_webview(LABEL).ok_or("the HTML5 console is not open")?;
-    wv.eval(paste_script(&text)).map_err(|e| e.to_string())?;
+    wv.eval(paste_script(&text, keys.as_deref())).map_err(|e| e.to_string())?;
     Ok(n)
 }
 

@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "bobcat"
-version = "1.5.1"
+version = "1.5.6"
 dependencies = [
  "arboard",
  "base64 0.22.1",

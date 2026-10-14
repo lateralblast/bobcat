@@ -2,6 +2,50 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.5.9] - 2026-10-14
+### Added
+- `bobcat-cli --disconnect sol`: closes the sessions the iDRAC8 lists as type `SOL` by session ID, like `gui`, `vc` and `ssh`. Real `getssninfo` listings from two iDRAC8s show both an ipmitool Serial over LAN session (`--console sol`) and a serial console opened over SSH (`console com2`, `--console ssh`) as `SOL`, so one option covers both. Not run on the iDRAC yet.
+
+## [1.5.8] - 2026-10-14
+### Added
+- `bobcat-cli --disconnect list|gui|vc|ssh`: `list` prints `racadm getssninfo`; `gui` (web interface), `vc` (alias `console`; Virtual Console) and `ssh` close the sessions of that type one by one with `racadm closessn -i <id>`, showing each (`closing session 327 (Virtual Console, user root)`). The session table is read from `racadm getssninfo` (fixed-width: `SSNID Type User IP Date`; the type may contain a space), the format taken from an iDRAC8's real output. `ssh` leaves the session it runs in (racadm cannot close it).
+- `--disconnect media` also closes any session the iDRAC lists as Virtual Media, after `vmdisconnect` and `remoteimage -d`.
+### Notes
+- The parser was checked against the real `getssninfo` output; closing by type has not been run on the iDRAC yet. Other session types the iDRAC lists (IPMI, Redfish, WSMAN, Remote Racadm...) are only reachable with `sessions` (all) until their exact names are known.
+
+## [1.5.7] - 2026-10-14
+### Added
+- `bobcat-cli --disconnect media|iso|vm|sessions|all` (comma list allowed): ends virtual media or sessions on the iDRAC over SSH. `media` runs `racadm vmdisconnect` (an image a console mapped) and `racadm remoteimage -d` (a network remote image); `sessions` runs `racadm closessn -a` (every other session); `all` does both, media first. Each command's answer is shown (`[ok]` / `[--]`); a command with nothing to do is not an error. Needs the iDRAC login like `--enable`, so the keychain, `--pass` or the prompt apply.
+### Notes
+- Argument parsing was checked; the racadm commands themselves have not been run against an iDRAC yet.
+
+## [1.5.6] - 2026-10-14
+### Fixed
+- GUI HTML5 console: disconnecting (Disconnect, closing the window, switching protocol) while an image was still mapped left the iDRAC's Virtual Media session behind, and the next console then said "Virtual Media is currently unavailable. A Virtual Media or Remote File Share session is in use" until the session was cleared on the iDRAC. The close now calls the page's `disconnectVM()` first when virtual media is active (what Dell's Disconnect Viewer button does), waits 1.2 s, then `disconnectKVM()`; the whole close takes about 3.7 s instead of 2.5 s. A session left over from before this fix has to be cleared on the iDRAC once.
+### Notes
+- Confirmed on hardware (Linux, iDRAC8): after Disconnect with an ISO still mapped, the next console connected virtual media normally.
+
+## [1.5.5] - 2026-10-14
+### Fixed
+- GUI HTML5 virtual media: the Map Device button stayed grey after choosing an image. On Linux the page's `change` handler never ran after the native file dialog (the input held the file, `fileName0` stayed undefined), so bobcat now checks the Virtual Media file inputs 2.5 times a second and does what Dell's handler does (sets `fileBlob`/`fileName`, enables the button) for a file the page has not seen. Found with the new test hook below; the virtual media session itself did start on the iDRAC.
+### Added
+- `BOBCAT_TEST_JS_EVERY=<seconds>` repeats the `BOBCAT_TEST_JS` expression (Linux), to watch page state while using the GUI.
+### Notes
+- Confirmed on hardware (Linux, iDRAC8): an ISO mapped as virtual CD/DVD was mounted and read from the server's OS. Unmap and disconnect cleanup, macOS and a removable disk image (`.img`) have not been tried.
+
+## [1.5.4] - 2026-10-14
+### Added
+- GUI HTML5 console: virtual media. The console URL now carries `vmPriv=true` when the logged-in user has the virtual media privilege (`accessVirtualMedia` from the iDRAC session), so Dell's viewer shows its own Virtual Media button: Connect Virtual Media, pick an `.iso` (CD/DVD) or `.img` (removable disk, floppy) with the file dialog, Map Device. `BOBCAT_HTML5_VM=0` hides it again; `BOBCAT_DEBUG=1` logs the privilege. How the page does it is in RESEARCH.md.
+### Notes
+- Not tried yet: whether the embedded web view's file dialog opens (Linux, macOS), and whether the iDRAC then mounts the image. The probe also showed that `vm_bool_enabled` is 1 and `vmedia_bool_enabled` 0 on the iDRAC at 192.168.8.98; bobcat does not look at either.
+
+## [1.5.3] - 2026-10-14
+### Added
+- GUI: Paste follows the keyboard layout chosen in the new Layout selector (US, UK, DE, FR; shared with the on-screen keyboard and remembered) for VNC and HTML5. For each character the page works out the key (by position, as the US key in the same place) and whether Shift is needed, as the on-screen keyboard would: on DE, `z` is the key at the US Y position and `/` is Shift+7. VNC sends (keysym, shift) pairs, HTML5 sends key events with `code`/`keyCode`/shift. Ctrl+Shift+V uses the same code. The selector is hidden for SSH, SOL and Java.
+- Characters that are not on the selected layout (AltGr ones such as `@`, `{`, `\` on DE and FR) are sent as themselves with the US Shift rule, as before.
+### Notes
+- Worked out and checked with a script (US, DE, FR, UK samples), not yet tried on hardware with a non-US server. Java Paste is unchanged: Linux already follows the X keyboard layout, macOS still types with the US layout. SSH/SOL paste sends characters, so layouts do not matter there.
+
 ## [1.5.2] - 2026-10-14
 ### Changed
 - `build.sh --target linux` without `--package` now builds the distribution's own package, chosen from `ID` / `ID_LIKE` in `/etc/os-release`: deb on Debian, Ubuntu and derivatives; rpm on RHEL, Fedora, CentOS, Alma, Rocky, Oracle, Amazon Linux and SUSE; AppImage on anything else. It used to build deb and AppImage. Add `--package appimage` (or `all`) for the AppImage. The `rpmbuild` check now applies to the default build too.

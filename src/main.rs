@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.5.2
+// Version: 1.5.9
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -25,6 +25,43 @@ enum Feature {
     Java,
     /// IPMI over LAN, Serial over LAN and serial console redirection
     Sol,
+}
+
+/// What `--disconnect` ends on the iDRAC
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Disconnect {
+    /// Show the iDRAC's sessions (racadm getssninfo) and end nothing
+    List,
+    /// Virtual media: the mapped ISO/image of a console session (HTML5/Java), a remote image, and
+    /// any Virtual Media session
+    #[value(alias = "iso", alias = "vm", alias = "virtualmedia")]
+    Media,
+    /// Web interface (GUI) sessions
+    Gui,
+    /// Virtual Console sessions (HTML5, Java)
+    #[value(alias = "console", alias = "virtualconsole")]
+    Vc,
+    /// SSH sessions (the one this runs in cannot be closed and is left)
+    Ssh,
+    /// Serial console sessions (listed as SOL: ipmitool Serial over LAN and the SSH `console com2` console)
+    Sol,
+    /// Every other iDRAC session of any type with `racadm closessn -a`
+    Sessions,
+    /// Virtual media first, then all sessions
+    All,
+}
+
+impl Disconnect {
+    /// The session type as `racadm getssninfo` names it, for the types that close by session ID.
+    fn session_type(self) -> Option<&'static str> {
+        match self {
+            Disconnect::Gui => Some("GUI"),
+            Disconnect::Vc => Some("Virtual Console"),
+            Disconnect::Ssh => Some("SSH"),
+            Disconnect::Sol => Some("SOL"),
+            _ => None,
+        }
+    }
 }
 
 /// iDRAC VNC SSL encryption setting (iDRAC.VNCServer.SSLEncryptionBitLength)
@@ -139,6 +176,13 @@ struct Args {
     /// Disable iDRAC features via racadm over SSH
     #[arg(long, value_enum, value_delimiter = ',')]
     disable: Vec<Feature>,
+
+    /// End sessions on the iDRAC via racadm over SSH: list shows them, media (alias iso, vm)
+    /// disconnects virtual media (e.g. after a console was closed with an image still mapped), gui,
+    /// vc (virtual console), ssh and sol close the sessions of that type, sessions closes all other
+    /// sessions, all does media and sessions
+    #[arg(long, value_enum, value_delimiter = ',')]
+    disconnect: Vec<Disconnect>,
 }
 
 /// Run one command on the iDRAC over SSH. Credentials are handed to the SSH
@@ -809,6 +853,7 @@ fn go(args: Args) -> Result<(), String> {
     // --console vnc uses the VNC password instead.
     let needs_login = !args.enable.is_empty()
         || !args.disable.is_empty()
+        || !args.disconnect.is_empty()
         || matches!(args.console, Some(Console::Sol) | Some(Console::Ssh));
     if args.forget {
         let login = keychain::forget(&args.user, &args.ip)?;
@@ -837,7 +882,7 @@ fn go(args: Args) -> Result<(), String> {
         },
         None => String::new(),
     };
-    if args.enable.is_empty() && args.disable.is_empty() && args.console.is_none() {
+    if args.enable.is_empty() && args.disable.is_empty() && args.disconnect.is_empty() && args.console.is_none() {
         println!("Target: {}@{}", args.user, args.ip);
         return Ok(());
     }
@@ -881,9 +926,10 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
     if args.enable.contains(&Feature::Html5) && args.enable.contains(&Feature::Java) {
         return Err("--enable html5 and --enable java select different consoles; pick one".into());
     }
-    if !args.enable.is_empty() || !args.disable.is_empty() {
+    if !args.enable.is_empty() || !args.disable.is_empty() || !args.disconnect.is_empty() {
         let sess = connect(&args.ip, &args.user, pass, args.trust_new_hostkey)?;
         configure(&sess, args)?;
+        disconnect(&sess, &args.disconnect)?;
     }
     match args.console {
         Some(Console::Sol) => console_sol(&args.ip, &args.user, pass)?,
@@ -900,6 +946,84 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
             vnc_text::run(&args.ip, args.port, !args.notls, vncpass, args.trust_new_hostkey, args.relearn)?
         }
         None => {}
+    }
+    Ok(())
+}
+
+/// Run a racadm command and show what it said; a failure is shown, not fatal (for example
+/// `vmdisconnect` has nothing to do when no virtual media is connected).
+fn run_show(sess: &Session, cmd: &str) {
+    match run(sess, cmd) {
+        Ok(out) => println!("[ok]   {cmd}{}", if out.trim().is_empty() { String::new() } else { format!(": {}", out.trim()) }),
+        Err(e) => println!("[--]   {e}"),
+    }
+}
+
+/// One row of `racadm getssninfo`.
+struct IdracSession {
+    id: String,
+    kind: String,
+    user: String,
+}
+
+/// The iDRAC's sessions. The table is fixed-width text: `SSNID Type User IP Date`, where the type
+/// can hold single spaces ("Virtual Console") and columns are separated by two or more.
+fn sessions(sess: &Session) -> Result<Vec<IdracSession>, String> {
+    let out = run(sess, "racadm getssninfo")?;
+    let mut list = Vec::new();
+    for line in out.lines() {
+        let line = line.trim_end();
+        let Some((id, rest)) = line.trim_start().split_once(char::is_whitespace) else { continue };
+        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+            continue; // header, dashes, blank
+        }
+        let rest = rest.trim_start();
+        let (kind, after) = match rest.find("  ") {
+            Some(i) => (&rest[..i], rest[i..].trim_start()),
+            None => (rest, ""),
+        };
+        let user = after.split_whitespace().next().unwrap_or("");
+        list.push(IdracSession { id: id.to_string(), kind: kind.trim().to_string(), user: user.to_string() });
+    }
+    Ok(list)
+}
+
+/// Close every session of one type, by session ID.
+fn close_type(sess: &Session, kind: &str) -> Result<(), String> {
+    let found: Vec<IdracSession> = sessions(sess)?.into_iter().filter(|s| s.kind.eq_ignore_ascii_case(kind)).collect();
+    if found.is_empty() {
+        println!("[--]   no {kind} session");
+    }
+    for s in found {
+        println!("closing session {} ({}, user {})", s.id, s.kind, s.user);
+        run_show(sess, &format!("racadm closessn -i {}", s.id));
+    }
+    Ok(())
+}
+
+/// `--disconnect`: end virtual media and/or sessions.
+fn disconnect(sess: &Session, what: &[Disconnect]) -> Result<(), String> {
+    let all = what.contains(&Disconnect::All);
+    if what.contains(&Disconnect::List) {
+        print!("{}", run(sess, "racadm getssninfo")?);
+    }
+    if all || what.contains(&Disconnect::Media) {
+        // client virtual media (the image a console mapped), then a network remote image,
+        // then any session the iDRAC still lists as Virtual Media
+        run_show(sess, "racadm vmdisconnect");
+        run_show(sess, "racadm remoteimage -d");
+        if sessions(sess)?.iter().any(|s| s.kind.eq_ignore_ascii_case("Virtual Media")) {
+            close_type(sess, "Virtual Media")?;
+        }
+    }
+    for w in what {
+        if let Some(kind) = w.session_type() {
+            close_type(sess, kind)?;
+        }
+    }
+    if all || what.contains(&Disconnect::Sessions) {
+        // closes every session but the one this runs in
+        run_show(sess, "racadm closessn -a");
     }
     Ok(())
 }

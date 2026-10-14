@@ -182,7 +182,9 @@ async function paste() {
   }
   if ($('proto').value === 'html5') {
     try {
-      const n = await invoke('html5_paste');
+      const text = await invoke('clipboard_text');
+      const keys = pasteKeys(text).filter((k) => k.code).map((k) => ({ key: k.ch, code: k.code, key_code: k.keyCode, shift: k.shift }));
+      const n = await invoke('html5_paste', { keys });
       $('status').textContent = `pasted ${n} characters`;
     } catch (err) {
       $('status').textContent = `paste failed: ${err}`;
@@ -203,7 +205,9 @@ async function paste() {
   for (const k of down.values()) key(false, k);
   down.clear();
   try {
-    const n = await invoke('paste_clipboard');
+    const text = await invoke('clipboard_text');
+    const keys = pasteKeys(text).map((k) => [k.keysym, k.shift]);
+    const n = await invoke('paste_clipboard', { keys });
     $('status').textContent = `pasted ${n} characters`;
   } catch (err) {
     $('status').textContent = `paste failed: ${err}`;
@@ -457,6 +461,7 @@ function setProto() {
   hide('.vnc-only', kind !== 'vnc');
   hide('.login-only', kind === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
+  hide('.layout-sel', kind === 'java' || kind === 'text'); // the keyboard layout pasting follows
   hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
   hide('.java-mac', kind === 'java' && !/Mac|Linux/.test(navigator.platform)); // Copy and Paste reach it on macOS and Linux
   $('wrap').classList.toggle('hidden', kind !== 'vnc');

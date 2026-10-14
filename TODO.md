@@ -15,17 +15,18 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] Set VNC SSL encryption via `--sslebl` (0.0.7)
 - [x] GUI: paste clipboard text as keystrokes (0.1.1; untested on hardware)
 - [x] GUI: copy text via drag-select OCR and server clipboard (0.1.2; untested, needs tesseract-ocr)
-- [ ] GUI: non-US keyboard layouts for paste
+- [x] GUI: non-US keyboard layouts for paste (1.5.3; untested on hardware: follows the Layout selector for VNC and HTML5)
 - [x] `--check` for required packages (0.1.3)
 - [x] `--check --install` via apt-get (0.1.4)
-- [ ] `--check`/`--install`: support non-apt distros' package names
+- [ ] `--check`/`--install`: support non-apt distros' package names (dnf/zypper; only apt and Homebrew are handled, so on an RPM distribution install the packages by hand)
 - [x] `--check`/`--install` on macOS: skip Linux-only GUI probes, use Homebrew (1.2.0)
 - [x] GUI on-screen keyboard (0.2.1; untested on hardware)
 - [x] GUI: TLS for encrypted iDRAC VNC (0.3.0; verified on hardware)
 - [x] GUI: pin the iDRAC TLS certificate, trust on first use (0.5.0; verified on hardware)
 - [ ] GUI: faster TLS relay (0.3.2 poll(2) attempt caused disconnects; investigate with logs). Zrle (0.4.0) already cuts the traffic a lot.
 - [x] On-screen keyboard layouts US/UK/DE/FR (0.7.0; untested on hardware)
-- [ ] Paste (Ctrl+Shift+V) is still US-layout only; make it follow the selected keyboard layout
+- [x] Paste (Ctrl+Shift+V) follows the selected keyboard layout (1.5.3; untested on hardware)
+- [ ] Paste: AltGr characters (`@`, `{`, `\\` on DE/FR), a hardware test on a non-US server, and the macOS Java paste (still US layout)
 - [x] `--enable sol` (0.9.1; verified read path, nothing needed changing)
 - [x] `--console sol` via ipmitool (0.9.2)
 - [x] `--console ssh` (iDRAC SSH `console com2`) without ipmitool (0.9.3)
@@ -39,12 +40,14 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI: Java console as an external viewer (macOS and Linux, 1.3.6; downloads an x86_64 Java 8 on macOS; needs more testing)
 - [ ] GUI: Java console: virtual media (`vm=1`), a clean stop from Disconnect (SIGTERM leaves iDRAC sessions behind), and the keyboard library warning on macOS
 - [x] GUI: Java console docked on Linux, with Paste and Copy (1.4.8, `java_x11.rs`; confirmed on hardware under GNOME/XWayland). Still open: HiDPI scaling, minimize/Spaces behaviour; GDK_BACKEND=x11 is forced
-- [ ] GUI: Java console as a docked window (macOS; 1.4.2, working on hardware; still to check: dialogs, Spaces and full screen, minimize): move and resize the viewer's window over the console area under the toolbar and keep it following the main window (hide/close with it). Needs the Accessibility permission (same one the keyboard library warning asks for), granting it to Bobcat is confirmed to remove that warning, so prompt for it in the app. A true sub-window is not possible across processes; alternatives are capture and re-draw (Screen Recording permission, laggy) or our own client for Dell's KVM protocol (large). Linux/X11 could reparent the window properly.
-- [ ] GUI: Copy and Paste for the Java console: macOS first version in 1.4.3 (Paste types key presses through CGEvent, Copy captures the window with `screencapture` and OCRs it); Paste confirmed on hardware (short and long, with symbols); Copy works but OCR of the scaled console font is only about 80% accurate (`@`, `5`, `-rw` misread); a fixed-grid glyph matcher like `bobcat-cli --console vnc` (cell detection, learned glyph table) would be exact, but the viewer scales the picture by a non-whole factor and the CLI's code is a separate crate. Linux: first version in 1.4.8 (XTest paste, GetImage copy; untried on hardware). Same capture could give HTML5 Copy on macOS, which is Linux-only today.
+- [ ] GUI: Java console as a docked window (macOS; 1.4.2, working on hardware; still to check: dialogs, Spaces and full screen, minimize): move and resize the viewer's window over the console area under the toolbar and keep it following the main window (hide/close with it). Needs the Accessibility permission (same one the keyboard library warning asks for), granting it to Bobcat is confirmed to remove that warning, so prompt for it in the app. A true sub-window is not possible across processes; alternatives are capture and re-draw (Screen Recording permission, laggy) or our own client for Dell's KVM protocol (large). On Linux the same docking is done with X11 (done, 1.4.8; reparenting the window was tried and fails, the window manager and Java take it back).
+- [ ] GUI: Copy and Paste for the Java console: macOS first version in 1.4.3 (Paste types key presses through CGEvent, Copy captures the window with `screencapture` and OCRs it); Paste confirmed on hardware (short and long, with symbols); Copy works but OCR of the scaled console font is only about 80% accurate (`@`, `5`, `-rw` misread); a fixed-grid glyph matcher like `bobcat-cli --console vnc` (cell detection, learned glyph table) would be exact, but the viewer scales the picture by a non-whole factor and the CLI's code is a separate crate. Linux (1.4.8, `java_x11.rs`): XTest paste and GetImage copy, both confirmed on hardware. Same capture could give HTML5 Copy on macOS, which is Linux-only today.
 - [x] GUI: Java console Fit window / Actual size: not possible (1.4.4): the Dell viewer always scales the picture to its window and has no 100% mode; see RESEARCH.md. A bigger window or a smaller server resolution is the only way to more pixels for Copy.
 - [ ] GUI: glyph matcher for Copy (Java console): prototyped and measured in 1.4.5 (see RESEARCH.md): voting among similar-looking cells over tesseract's character boxes gives 88% against 83% for plain OCR, and 94% would need correct glyph names; the viewer's compressed, scaled video is the limit. Not ported. Better routes: Copy from the iDRAC's VNC console when it is enabled (exact framebuffer text, as `bobcat-cli --console vnc` does), or a larger window.
 - [ ] Our own client for Dell's KVM protocol (the one the Java viewer `avctKVM.jar` speaks), drawn in the main window like VNC: no Java, no Rosetta (the viewer's native libraries `libavctKVMIO`/`libVMAPI_DLL` are Intel-only and hold its OpenSSL, and probably video and keyboard code), a true embedded view, virtual media possible, keyboard without the Accessibility permission. Large: needs the protocol worked out from the jar (and the native code) and from traffic. Replaces the docked-window idea above and the Java runtime download. Start with a study of what the viewer sends after login (RESEARCH.md).
-- [ ] GUI: HTML5 virtual media (the viewer passes vmPriv=false) and a `--console html5` for the CLI
+- [~] GUI: HTML5 virtual media (works on Linux: an ISO was mapped and read from the server, 1.5.5; 1.5.6 ends a mapped session on Disconnect (confirmed on Linux); still to try: an `.img` removable disk, macOS, and the Java console's virtual media is a separate item). Earlier notes (1.5.4: vmPriv=true shows Dell's Virtual Media button; file dialog and the viewer's virtual media session work on Linux, 1.5.5 works around the missing `change` event; untested: mapping an ISO and seeing it from the server, unmapping/disconnect cleanup, macOS, the same for the CLI is not planned)
+- [x] `bobcat-cli --disconnect list|media|iso|gui|vc|ssh|sol|sessions|all` (1.5.7-1.5.9; racadm commands not yet run against an iDRAC; other session types such as IPMI/Redfish need their names from a real listing)
+- [ ] A `--console html5` for the CLI
 - [x] GUI: HTML5 embedded view on macOS (1.3.0; frame-based layout between the toolbar and status bar; needs more testing)
 - [ ] GUI: HTML5 embedded view on Windows (other platforms still use the separate window)
 - [x] CLI: iDRAC password in the OS keychain (`--save` / `--forget`) (1.2.1)
@@ -53,8 +56,8 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
 - [ ] GUI HTML5: on-screen keyboard through the same key events
 - [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried and working, including the Local Network permission)
-- [ ] build.sh: build and install-test the rpm (`--package rpm`, 1.5.0; needs `rpmbuild`)
+- [ ] build.sh: install-test the deb and rpm (both build on Ubuntu with `--package deb|rpm`; installing and running them is untried) and build the rpm on an RPM distribution
 - [x] `build.sh --target deb` / `--package deb|rpm|appimage|all` (1.4.7; deb builds on Linux, install not tried)
-- [ ] build.sh: test `--target linux` and `--target windows`, `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console
+- [ ] build.sh: test `--target windows` (`--target linux` builds the distribution's package on Ubuntu, 1.5.2), `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console
 - [x] `build.sh --delete-release [<version>]` (1.4.9; untried against GitHub, `--dry-run` first)
 - [x] `build.sh --release`: tag, push and GitHub release with the installers (1.4.6; only `--dry-run` tried)

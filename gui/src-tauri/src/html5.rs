@@ -216,7 +216,7 @@ pub(crate) fn login_as(ip: &str, user: &str, pass: &str, plugin: &str) -> Result
         let r = request(ip, "GET", path, &[("Cookie", session.cookie.clone()), ("ST2", st2.clone())], None)?;
         serde_json::from_str(&r.text()).map_err(|_| format!("unexpected answer from {path} (HTTP {})", r.status))
     };
-    let ssn = get("/session?getSsnVar=aimSession,accessConsoleRedirection")?;
+    let ssn = get("/session?getSsnVar=aimSession,accessConsoleRedirection,accessVirtualMedia")?;
     let props = get("/session?aimGetIntProp=rp_int_apcp_port,gui_kvm_plugin_type,vkvm_bool_enabled")?;
     let pick = |v: &serde_json::Value, group: &str, key: &str| -> String {
         match &v[group][key] {
@@ -252,8 +252,14 @@ pub(crate) fn login_as(ip: &str, user: &str, pass: &str, plugin: &str) -> Result
     };
     let aim = pick(&ssn, "getSsnVar", "aimSession");
     let port = pick(&props, "aimGetIntProp", "rp_int_apcp_port");
+    // the viewer shows its Virtual Media button when vmPriv is true (the web UI sends true when the
+    // user has the virtual media privilege); BOBCAT_HTML5_VM=0 hides it again
+    let vm_priv = pick(&ssn, "getSsnVar", "accessVirtualMedia") == "1" && std::env::var("BOBCAT_HTML5_VM").map_or(true, |v| v != "0");
+    if debug_on() {
+        eprintln!("[bobcat] html5: virtual media privilege: {vm_priv}");
+    }
     let url = format!(
-        "https://{ip}/virtualconsolehtml5.html?ipAddr={ip}&kvmPort={port}&vmPriv=false&lang=en&aimSession={aim}&ST2={st2}&TokenName=ST1&TokenKey={st1}"
+        "https://{ip}/virtualconsolehtml5.html?ipAddr={ip}&kvmPort={port}&vmPriv={vm_priv}&lang=en&aimSession={aim}&ST2={st2}&TokenName=ST1&TokenKey={st1}"
     );
     Ok(Console { session, url, locale: locale_obj.to_string(), st1 })
 }
@@ -440,11 +446,13 @@ pub(crate) fn debug_on() -> bool {
 /// disconnectKVM(), which sends the "close connection" messages so the iDRAC ends the Virtual
 /// Console session, give it a moment, and only then close the view (just killing it leaves the
 /// Virtual Console session on the iDRAC for minutes). Then log the web session out. Works for
-/// the embedded view and the separate window. Blocks for about 2.5 seconds.
+/// the embedded view and the separate window. Blocks for about 3.7 seconds.
 pub fn close_window(app: &AppHandle) {
     let Some(wv) = app.get_webview(LABEL) else { return };
-    let _ = wv.eval("try { disconnectKVM(); } catch (e) {}");
-    std::thread::sleep(Duration::from_millis(2500));
+    // an active Virtual Media session is ended first (as the page's own Disconnect Viewer button does:
+    // disconnectVM(); disconnectKVM()), or the iDRAC keeps it and refuses virtual media next time
+    let _ = wv.eval("try { if (typeof bLaunchVMedia !== 'undefined' && bLaunchVMedia) { disconnectVM(); setTimeout(function () { try { disconnectKVM(); } catch (e) {} }, 1200); } else { disconnectKVM(); } } catch (e) { try { disconnectKVM(); } catch (e2) {} }");
+    std::thread::sleep(Duration::from_millis(3700));
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.destroy();
     } else {
@@ -469,9 +477,29 @@ fn destroy_popups(app: &AppHandle) {
 /// window.opener.top.localeObj, so provide that before its scripts run.
 fn opener_script(locale: &str) -> String {
     format!(
-        "try {{ Object.defineProperty(window, 'opener', {{ configurable: true, value: {{ top: {{ localeObj: {locale}, htmlViewerWindow: null }} }} }}); }} catch (e) {{}}"
+        "try {{ Object.defineProperty(window, 'opener', {{ configurable: true, value: {{ top: {{ localeObj: {locale}, htmlViewerWindow: null }} }} }}); }} catch (e) {{}}\n{VM_FILE_SCRIPT}"
     )
 }
+
+/// The viewer's Virtual Media dialog enables its "Map Device" button from a `change` event on its
+/// file inputs. In the embedded web view that event does not arrive after the native file dialog
+/// (the input holds the file, the page never hears about it), so look at the inputs a few times a
+/// second and do what the page's handler would have done for a file it has not seen yet.
+const VM_FILE_SCRIPT: &str = r#"(function () {
+  setInterval(function () {
+    for (var n = 0; n < 2; n++) {
+      try {
+        var input = document.getElementById('fileDisk' + n), btn = document.getElementById('btnMapDisk' + n);
+        if (!input || !btn || !input.files || input.files.length === 0 || typeof mapDeviceButtonEnabled !== 'function') continue;
+        var file = input.files[0];
+        if (window['fileBlob' + n] === file) continue;
+        window['fileBlob' + n] = file;
+        window['fileName' + n] = file.name;
+        mapDeviceButtonEnabled(btn, true);
+      } catch (e) {}
+    }
+  }, 400);
+})();"#;
 
 /// The viewer opens a small window to the console server's own address (https://<ip>:5900) so the
 /// browser can trust its certificate, pings it with postMessage and waits for the page to answer.
@@ -834,9 +862,17 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
         // "<seconds>:<javascript expression>": evaluate it in the console page and log the result
         if let Some((secs, js)) = spec.split_once(':') {
             let (secs, js, app) = (secs.parse::<u64>().unwrap_or(30), js.to_string(), app.clone());
+            // BOBCAT_TEST_JS_EVERY=<seconds> repeats it until the program ends
+            let every = std::env::var("BOBCAT_TEST_JS_EVERY").ok().and_then(|v| v.parse::<u64>().ok());
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(secs));
-                eprintln!("[bobcat] test js: {:?}", crate::html5_tools::run_js_pub(&app, js));
+                loop {
+                    eprintln!("[bobcat] test js: {:?}", crate::html5_tools::run_js_pub(&app, js.clone()));
+                    match every {
+                        Some(n) => std::thread::sleep(Duration::from_secs(n.max(1))),
+                        None => break,
+                    }
+                }
             });
         }
     }

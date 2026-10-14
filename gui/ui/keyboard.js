@@ -172,6 +172,8 @@ function oskBuildKeys() {
 function oskSetLayout(name) {
   osk.layout = name;
   try { localStorage.setItem('bobcat.layout', name); } catch (_) {}
+  if ($('kblayout')) $('kblayout').value = name;
+  if (!osk.el) return; // the on-screen keyboard is not built yet: it picks the layout up when it is
   for (const [n, b] of Object.entries(osk.layoutBtns)) b.classList.toggle('on', n === name);
   oskBuildKeys();
 }
@@ -215,3 +217,57 @@ function oskToggle(show) {
   osk.el.style.display = (show ?? osk.el.style.display === 'none') ? 'block' : 'none';
 }
 document.getElementById('kbd').onclick = () => oskToggle(osk.el ? undefined : true);
+
+// ---- paste follows the selected layout -------------------------------------
+// The characters of the clipboard are typed the way the selected layout's keys would produce them:
+// for each character, the key (by position, as the US key with the same place) and whether Shift is
+// needed. Characters that are not on the layout (AltGr ones such as @ on a German keyboard) are
+// sent as themselves with the US Shift rule.
+const US_POS = [
+  // [code, keyCode] per key, by row (number row, top row, home row, bottom row)
+  [['Backquote', 192], ...'1234567890'.split('').map((d) => ['Digit' + d, d.charCodeAt(0)]), ['Minus', 189], ['Equal', 187]],
+  [...'QWERTYUIOP'.split('').map((c) => ['Key' + c, c.charCodeAt(0)]), ['BracketLeft', 219], ['BracketRight', 221], ['Backslash', 220]],
+  [...'ASDFGHJKL'.split('').map((c) => ['Key' + c, c.charCodeAt(0)]), ['Semicolon', 186], ['Quote', 222], ['Backslash', 220]],
+  [...'ZXCVBNM'.split('').map((c) => ['Key' + c, c.charCodeAt(0)]), ['Comma', 188], ['Period', 190], ['Slash', 191]],
+];
+const PASTE_MAPS = {};
+function pasteMap(name) {
+  if (PASTE_MAPS[name]) return PASTE_MAPS[name];
+  const map = new Map(); // character -> { shift, code, keyCode }
+  const rows = LAYOUTS[name].slice(1, 5).map((r) => r.filter((k) => Array.isArray(k) || (k.length === 1)));
+  rows.forEach((keys, r) => {
+    // a bottom row with one more key than the US row starts with the extra ISO key (< or \)
+    const extra = r === 3 && keys.length > US_POS[3].length ? 1 : 0;
+    keys.forEach((key, i) => {
+      const pos = extra && i === 0 ? ['IntlBackslash', 226] : (US_POS[r][i - extra] || ['Backslash', 220]);
+      const [lo, hi] = Array.isArray(key) ? key : [key, key.toUpperCase()];
+      if (!map.has(lo)) map.set(lo, { shift: false, code: pos[0], keyCode: pos[1] });
+      if (!map.has(hi)) map.set(hi, { shift: true, code: pos[0], keyCode: pos[1] });
+    });
+  });
+  PASTE_MAPS[name] = map;
+  return map;
+}
+const US_SHIFTED = '~!@#$%^&*()_+{}|:"<>?';
+const US_FALLBACK = { Space: ['Space', 32] };
+
+// [{ ch, keysym, shift, code, keyCode }] for the characters of text on the selected layout
+function pasteKeys(text) {
+  const map = pasteMap(osk.layout);
+  const usmap = pasteMap('US');
+  const out = [];
+  for (const ch of text) {
+    if (ch === '\r') continue;
+    if (ch === '\n') { out.push({ ch, keysym: 0xff0d, shift: false, code: 'Enter', keyCode: 13 }); continue; }
+    if (ch === '\t') { out.push({ ch, keysym: 0xff09, shift: false, code: 'Tab', keyCode: 9 }); continue; }
+    if (ch === ' ') { out.push({ ch, keysym: 0x20, shift: false, code: 'Space', keyCode: 32 }); continue; }
+    const hit = map.get(ch);
+    if (hit) { out.push({ ch, keysym: keysymOf(ch), ...hit }); continue; }
+    const us = usmap.get(ch);
+    out.push({ ch, keysym: keysymOf(ch), shift: us ? us.shift : (US_SHIFTED.includes(ch) || (ch >= 'A' && ch <= 'Z')), code: us ? us.code : null, keyCode: us ? us.keyCode : 0 });
+  }
+  return out;
+}
+
+$('kblayout').value = osk.layout;
+$('kblayout').onchange = () => oskSetLayout($('kblayout').value);

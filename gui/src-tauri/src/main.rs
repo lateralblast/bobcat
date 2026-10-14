@@ -891,10 +891,15 @@ fn char_keysym(c: char) -> Option<(u32, bool)> {
 
 /// Type the local clipboard text into the console as key events.
 #[tauri::command]
-fn paste_clipboard(state: State<Session>) -> Result<usize, String> {
-    let text = with_clip(|c| c.get_text())?;
+fn paste_clipboard(state: State<Session>, keys: Option<Vec<(u32, bool)>>) -> Result<usize, String> {
+    // `keys` (keysym, shift) come from the page, worked out for the selected keyboard layout;
+    // without them the clipboard is typed with the US layout
+    let keys: Vec<(u32, bool)> = match keys {
+        Some(k) => k,
+        None => with_clip(|c| c.get_text())?.chars().filter_map(char_keysym).collect(),
+    };
     let tx = state.0.lock().unwrap().clone().ok_or("not connected")?;
-    let n = text.chars().count();
+    let n = keys.len();
     if n > 10_000 {
         return Err(format!("clipboard too large ({n} chars, max 10000)"));
     }
@@ -903,8 +908,7 @@ fn paste_clipboard(state: State<Session>) -> Result<usize, String> {
             let _ = tx.send(Cmd::Key { down, keysym });
             thread::sleep(Duration::from_millis(8));
         };
-        for c in text.chars() {
-            let Some((sym, shift)) = char_keysym(c) else { continue };
+        for (sym, shift) in keys {
             if shift {
                 key(true, 0xffe1);
             }
