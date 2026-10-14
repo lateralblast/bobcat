@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.4.9
+Version: 1.5.2
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -56,7 +56,7 @@ use, saved in `~/.config/bobcat/known_certs.json`, shared with `bobcat`) and the
 change. `--trust-new-hostkey` accepts a changed key or certificate.
 
 **Packages.** `bobcat-cli --check` verifies that `ipmitool`, `tesseract` and the GUI's libraries are installed;
-add `--install` to install missing ones with apt (sudo prompts for its own password) or, on macOS, Homebrew (and Rosetta 2 on Apple Silicon). It also reports, without failing, whether Homebrew, Rosetta 2 (macOS) and a Java runtime (for the GUI's Java console) are present.
+add `--install` to install missing ones (and `rpmbuild`) with apt (sudo prompts for its own password) or, on macOS, Homebrew (and Rosetta 2 on Apple Silicon). It also reports, without failing, whether Homebrew, Rosetta 2 (macOS), `rpmbuild` (Linux, only for `build.sh --package rpm`) and a Java runtime (for the GUI's Java console) are present.
 
 ## bobcat
 
@@ -142,8 +142,9 @@ What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means th
 ```
 ./build.sh --target mac        # dist/bobcat_<version>_<arch>.dmg and dist/bobcat-cli-<version>-mac
 ./build.sh --target mac --arch universal   # or arm64 / x64
-./build.sh --target linux      # .deb and .AppImage (build on Linux)
-./build.sh --target deb        # only the .deb (same as --target linux --format deb; --format appimage for only the AppImage)
+./build.sh --target linux      # the distribution's own package: .deb on Debian/Ubuntu, .rpm on RHEL/Fedora/Alma/Rocky/SUSE, else .AppImage (build on Linux)
+./build.sh --target linux --package rpm   # or deb / appimage / all, or a list like deb,rpm (rpm needs rpmbuild)
+./build.sh --target deb        # shortcut for --target linux --package deb (also --target rpm)
 ./build.sh --target windows    # NSIS setup.exe (build on Windows, e.g. Git Bash)
 ```
 

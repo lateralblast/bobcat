@@ -2,6 +2,22 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.5.2] - 2026-10-14
+### Changed
+- `build.sh --target linux` without `--package` now builds the distribution's own package, chosen from `ID` / `ID_LIKE` in `/etc/os-release`: deb on Debian, Ubuntu and derivatives; rpm on RHEL, Fedora, CentOS, Alma, Rocky, Oracle, Amazon Linux and SUSE; AppImage on anything else. It used to build deb and AppImage. Add `--package appimage` (or `all`) for the AppImage. The `rpmbuild` check now applies to the default build too.
+### Fixed/Tested
+- The rpm build works on this Ubuntu machine (`--package rpm`: `dist/bobcat-1.5.1-1.x86_64.rpm`); installing it has not been tried.
+
+## [1.5.1] - 2026-10-14
+### Added
+- `bobcat-cli --check` reports `rpmbuild` on Linux (optional, never fails the check; it is only needed for `build.sh --package rpm`). `--check --install` now also installs optional items that have a package (`rpm` through apt); Rosetta 2 is still installed through `softwareupdate`.
+
+## [1.5.0] - 2026-10-14
+### Added
+- `build.sh --target linux --package deb|rpm|appimage|all`: choose the Linux package (a comma list such as `deb,rpm` works; without `--package` it still builds deb and AppImage; `all` is deb, rpm and AppImage). `--target rpm` is a shortcut like `--target deb`. An rpm needs `rpmbuild` (`apt install rpm` / `dnf install rpm-build`), which the script checks for first. Release uploads and the `dist/` copy pick up `.rpm` files. Not built yet: `rpmbuild` is not installed on the Linux machine, so only the argument checks were tried.
+### Changed
+- `--format` (1.4.7) is now `--package`; `--format` still works as an alias.
+
 ## [1.4.9] - 2026-10-14
 ### Added
 - `build.sh --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]`: deletes the GitHub release `v<version>` (default: the current version) with its uploaded files, and the tag on GitHub and locally unless `--keep-tag` is given. It shows what it will delete and asks first (`--yes` skips the question); `--dry-run` only prints the commands. It cannot be combined with `--release` or `--target`, and never touches commits or `dist/`. Not run yet (`gh` is not installed on the Linux machine; only the argument checks were tried).

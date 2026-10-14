@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.4.9
+// Version: 1.5.2
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -416,6 +416,16 @@ const DEPS: &[Dep] = &[
         optional: true,
         hint: "softwareupdate --install-rosetta --agree-to-license (or --check --install)",
     },
+    #[cfg(target_os = "linux")]
+    Dep {
+        name: "rpmbuild",
+        probe: Probe::Bin("rpmbuild"),
+        apt: "rpm",
+        brew: "",
+        purpose: "build.sh --package rpm",
+        optional: true,
+        hint: "sudo apt install rpm (Fedora: dnf install rpm-build), or --check --install",
+    },
     Dep {
         name: "Java runtime",
         probe: Probe::Java,
@@ -468,7 +478,11 @@ fn present(probe: &Probe) -> bool {
 }
 
 fn check(install: bool) -> bool {
-    let (missing, optional) = report();
+    let (mut missing, optional, extra) = report();
+    // optional items that a package provides are installed too, when asked to
+    if install {
+        missing.extend(extra);
+    }
     // Rosetta 2 is the one optional item bobcat-cli can install (it is not a package manager package)
     let rosetta = optional.contains(&"Rosetta 2");
     if missing.is_empty() && !(install && rosetta) {
@@ -498,11 +512,12 @@ fn check(install: bool) -> bool {
     report().0.is_empty()
 }
 
-/// Print the status of every dependency; returns the packages that are missing (required) and the
-/// names of the missing optional ones.
-fn report() -> (Vec<&'static str>, Vec<&'static str>) {
+/// Print the status of every dependency; returns the packages that are missing (required), the
+/// names of the missing optional ones and the packages that would provide those.
+fn report() -> (Vec<&'static str>, Vec<&'static str>, Vec<&'static str>) {
     let mut missing = Vec::new();
     let mut optional = Vec::new();
+    let mut extra = Vec::new();
     for d in DEPS {
         let ok = present(&d.probe);
         let tag = if ok { "ok" } else if d.optional { "--" } else { "MISSING" };
@@ -510,12 +525,16 @@ fn report() -> (Vec<&'static str>, Vec<&'static str>) {
         if !ok {
             if d.optional {
                 optional.push(d.name);
+                let pkg = if cfg!(target_os = "macos") { d.brew } else { d.apt };
+                if !pkg.is_empty() {
+                    extra.push(pkg);
+                }
             } else {
                 missing.push(if cfg!(target_os = "macos") { d.brew } else { d.apt });
             }
         }
     }
-    (missing, optional)
+    (missing, optional, extra)
 }
 
 /// Package manager install command for this platform, as (display, program, args).

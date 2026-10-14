@@ -53,7 +53,8 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
 - [ ] GUI HTML5: on-screen keyboard through the same key events
 - [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried and working, including the Local Network permission)
-- [x] `build.sh --target deb` / `--format deb|appimage|all` (1.4.7; deb builds on Linux, install not tried)
+- [ ] build.sh: build and install-test the rpm (`--package rpm`, 1.5.0; needs `rpmbuild`)
+- [x] `build.sh --target deb` / `--package deb|rpm|appimage|all` (1.4.7; deb builds on Linux, install not tried)
 - [ ] build.sh: test `--target linux` and `--target windows`, `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console
 - [x] `build.sh --delete-release [<version>]` (1.4.9; untried against GitHub, `--dry-run` first)
 - [x] `build.sh --release`: tag, push and GitHub release with the installers (1.4.6; only `--dry-run` tried)

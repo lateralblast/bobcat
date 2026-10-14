@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build Bobcat installers.
 #   ./build.sh --target mac [--arch arm64|x64|universal]
-#   ./build.sh --target linux [--format deb|appimage|all]   (default all; --target deb = linux, deb only)
+#   ./build.sh --target linux [--package deb|rpm|appimage|all]   (comma list allowed, e.g. deb,rpm; default: the distribution's own
+#                                                                 package, deb on Debian/Ubuntu, rpm on RHEL/Fedora/Alma/Rocky/SUSE, else appimage;
+#                                                                 --target deb / --target rpm = linux with that package only)
 #   ./build.sh --target windows      (run on Windows, e.g. in Git Bash)
 #   ./build.sh [--target <t>] --release [--draft] [--yes] [--dry-run]
 #   ./build.sh --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]
@@ -23,18 +25,18 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --target mac|linux|deb|windows [--arch arm64|x64|universal] [--format deb|appimage|all] [--no-cli]"
+  echo "usage: $0 --target mac|linux|deb|rpm|windows [--arch arm64|x64|universal] [--package deb|rpm|appimage|all] [--no-cli]"
   echo "       $0 [--target <t>] --release [--draft] [--yes] [--dry-run]"
   echo "       $0 --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]"
   exit "${1:-1}"
 }
 
-target="" arch="" format="" cli=1 delete=0 del_version="" keep_tag=0 release=0 draft=0 yes=0 dry=0
+target="" arch="" package="" cli=1 delete=0 del_version="" keep_tag=0 release=0 draft=0 yes=0 dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) target="${2:-}"; shift 2 ;;
     --arch) arch="${2:-}"; shift 2 ;;
-    --format) format="${2:-}"; shift 2 ;;
+    --package|--format) package="${2:-}"; shift 2 ;;
     --no-cli) cli=0; shift ;;
     --release) release=1; shift ;;
     --delete-release)
@@ -56,24 +58,42 @@ root=$(cd "$(dirname "$0")" && pwd)
 dist="$root/dist"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/gui/src-tauri/Cargo.toml" | head -1)
 
+# The package format of the Linux distribution this runs on (/etc/os-release ID and ID_LIKE).
+native_package() {
+  local ids=""
+  [ -r /etc/os-release ] && ids=$(. /etc/os-release; echo "${ID:-} ${ID_LIKE:-}")
+  case " $ids " in
+    *" debian "*|*" ubuntu "*) echo deb ;;
+    *" rhel "*|*" fedora "*|*" centos "*|*" almalinux "*|*" rocky "*|*" suse "*|*" opensuse "*|*" opensuse-leap "*|*" sles "*|*" amzn "*|*" ol "*) echo rpm ;;
+    *) echo appimage ;;
+  esac
+}
+
 build_target() {
   host=$(uname -s)
-  [ "$target" = deb ] && { target=linux; format=deb; }
+  case "$target" in deb|rpm) package="$target"; target=linux ;; esac
   case "$target" in
     mac|macos)   want=Darwin; bundles=dmg ;;
-    linux)       want=Linux;  bundles=deb,appimage ;;
+    linux)       want=Linux;  bundles=$(native_package) ;;
     windows|win) want=MINGW;  bundles=nsis ;;
-    *) echo "unknown target: $target (mac, linux, deb, windows)" >&2; exit 1 ;;
+    *) echo "unknown target: $target (mac, linux, deb, rpm, windows)" >&2; exit 1 ;;
   esac
-  if [ -n "$format" ] && [ "$target" != linux ]; then
-    echo "--format only applies to --target linux" >&2; exit 1
+  if [ -n "$package" ] && [ "$target" != linux ]; then
+    echo "--package only applies to --target linux" >&2; exit 1
+  fi
+  if [ "$target" = linux ] && [ -n "$package" ]; then
+    bundles=""
+    for p in ${package//,/ }; do
+      case "$p" in
+        all) bundles="deb,rpm,appimage"; break ;;
+        deb|rpm|appimage) bundles="${bundles:+$bundles,}$p" ;;
+        *) echo "unknown --package: $p (deb, rpm, appimage, all)" >&2; exit 1 ;;
+      esac
+    done
   fi
   if [ "$target" = linux ]; then
-    case "${format:-all}" in
-      all) ;;
-      deb) bundles=deb ;;
-      appimage) bundles=appimage ;;
-      *) echo "unknown --format: $format (deb, appimage, all)" >&2; exit 1 ;;
+    case ",$bundles," in
+      *,rpm,*) command -v rpmbuild >/dev/null || { echo "rpmbuild not found: install it (Debian/Ubuntu: apt install rpm; Fedora: dnf install rpm-build)" >&2; exit 1; } ;;
     esac
   fi
   case "$host" in
@@ -115,7 +135,7 @@ build_target() {
     echo "  $dist/$(basename "$f")"
     found=1
   done < <(find "$root/gui/src-tauri/target" -path '*/release/bundle/*' -type f \
-    \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*-setup.exe' \) -newer "$root/gui/src-tauri/Cargo.toml" 2>/dev/null)
+    \( -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*-setup.exe' \) -newer "$root/gui/src-tauri/Cargo.toml" 2>/dev/null)
   [ "$found" = 1 ] || { echo "no installer found under gui/src-tauri/target" >&2; exit 1; }
 
   if [ "$cli" = 1 ]; then
