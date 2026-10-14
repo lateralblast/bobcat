@@ -392,7 +392,7 @@ pub fn copy_text() -> Result<String, String> {
         return Err("screencapture failed".into());
     }
     let png = png?;
-    let clean = prepare_for_ocr(&png).unwrap_or_else(|_| png.clone());
+    let clean = crate::java_console::prepare_for_ocr(&png).unwrap_or_else(|_| png.clone());
     if html5::debug_on() {
         let dir = std::env::temp_dir();
         let _ = std::fs::write(dir.join("bobcat-java-copy-raw.png"), &png);
@@ -401,22 +401,3 @@ pub fn copy_text() -> Result<String, String> {
     }
     crate::ocr_png_to_clipboard_args(&clean, &["-c", "preserve_interword_spaces=1"])
 }
-
-/// Make a screen capture easier for tesseract: grayscale, text dark on light (a light-on-dark
-/// console is inverted), enlarged 3x with bicubic smoothing. No black-and-white step: measured on a
-/// capture of a Linux text console, thresholding cost far more accuracy than it gained (about 78%
-/// character match with the grays kept, 60% or less with a threshold).
-fn prepare_for_ocr(png: &[u8]) -> Result<Vec<u8>, String> {
-    use image::{imageops, ImageFormat};
-    let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| e.to_string())?;
-    let mut gray = img.to_luma8();
-    let mean = gray.pixels().map(|p| p.0[0] as u64).sum::<u64>() / (gray.width() as u64 * gray.height() as u64).max(1);
-    if mean < 128 {
-        imageops::invert(&mut gray);
-    }
-    let big = imageops::resize(&gray, gray.width() * 3, gray.height() * 3, imageops::FilterType::CatmullRom);
-    let mut buf = std::io::Cursor::new(Vec::new());
-    big.write_to(&mut buf, ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(buf.into_inner())
-}
-

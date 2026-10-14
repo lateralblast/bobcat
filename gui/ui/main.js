@@ -458,7 +458,7 @@ function setProto() {
   hide('.login-only', kind === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
   hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
-  hide('.java-mac', kind === 'java' && !/Mac/.test(navigator.platform)); // Copy and Paste reach it only on macOS
+  hide('.java-mac', kind === 'java' && !/Mac|Linux/.test(navigator.platform)); // Copy and Paste reach it on macOS and Linux
   $('wrap').classList.toggle('hidden', kind !== 'vnc');
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');

@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.4.6
+Version: 1.4.9
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -143,6 +143,7 @@ What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means th
 ./build.sh --target mac        # dist/bobcat_<version>_<arch>.dmg and dist/bobcat-cli-<version>-mac
 ./build.sh --target mac --arch universal   # or arm64 / x64
 ./build.sh --target linux      # .deb and .AppImage (build on Linux)
+./build.sh --target deb        # only the .deb (same as --target linux --format deb; --format appimage for only the AppImage)
 ./build.sh --target windows    # NSIS setup.exe (build on Windows, e.g. Git Bash)
 ```
 
@@ -150,6 +151,7 @@ What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means th
 release with the installers in `dist/` for that version (needs `gh`, logged in; notes come from `CHANGELOG.md`). Run it on each
 platform's machine to add that platform's files to the same release. It never commits: commit and push first. `--draft`
 makes a draft release, `--dry-run` shows what it would do, `--yes` skips the question.
+`./build.sh --delete-release [<version>]` deletes that release (default: the current version) and its tag after asking; `--keep-tag` keeps the tag, `--yes` skips the question, `--dry-run` only prints.
 
 ![The macOS installer: drag bobcat to Applications](docs/img/installer-dmg.png)
 

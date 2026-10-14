@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "bobcat-cli"
-version = "1.4.6"
+version = "1.4.7"
 dependencies = [
  "clap",
  "keyring",

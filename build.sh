@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build Bobcat installers.
 #   ./build.sh --target mac [--arch arm64|x64|universal]
-#   ./build.sh --target linux
+#   ./build.sh --target linux [--format deb|appimage|all]   (default all; --target deb = linux, deb only)
 #   ./build.sh --target windows      (run on Windows, e.g. in Git Bash)
 #   ./build.sh [--target <t>] --release [--draft] [--yes] [--dry-run]
+#   ./build.sh --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]
 # A target can only be built on its own platform (the GUI links the system web view).
 # Results are copied to ./dist/. Needs the Rust toolchain and tauri-cli
 # (cargo install tauri-cli --version '^2'). License: CC BY-NC-SA 4.0 (LICENSE.md).
@@ -15,21 +16,32 @@
 # commits: the working tree must already be committed and pushed. Without --target it only releases
 # what is already in dist/. --draft creates a draft release, --yes skips the question,
 # --dry-run prints what it would do and changes nothing.
+#
+# --delete-release deletes the GitHub release v<version> (default: the current version) with its uploaded
+# files, and the tag v<version> on GitHub and locally unless --keep-tag is given. It asks first (--yes skips
+# the question). It never touches commits or dist/.
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --target mac|linux|windows [--arch arm64|x64|universal] [--no-cli]"
+  echo "usage: $0 --target mac|linux|deb|windows [--arch arm64|x64|universal] [--format deb|appimage|all] [--no-cli]"
   echo "       $0 [--target <t>] --release [--draft] [--yes] [--dry-run]"
+  echo "       $0 --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]"
   exit "${1:-1}"
 }
 
-target="" arch="" cli=1 release=0 draft=0 yes=0 dry=0
+target="" arch="" format="" cli=1 delete=0 del_version="" keep_tag=0 release=0 draft=0 yes=0 dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) target="${2:-}"; shift 2 ;;
     --arch) arch="${2:-}"; shift 2 ;;
+    --format) format="${2:-}"; shift 2 ;;
     --no-cli) cli=0; shift ;;
     --release) release=1; shift ;;
+    --delete-release)
+      delete=1; shift
+      case "${1:-}" in -*|"") ;; *) del_version="${1#v}"; shift ;;
+      esac ;;
+    --keep-tag) keep_tag=1; shift ;;
     --draft) draft=1; shift ;;
     --yes) yes=1; shift ;;
     --dry-run) dry=1; shift ;;
@@ -37,7 +49,8 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; usage ;;
   esac
 done
-[ -n "$target" ] || [ "$release" = 1 ] || usage
+[ -n "$target" ] || [ "$release" = 1 ] || [ "$delete" = 1 ] || usage
+[ "$delete" = 0 ] || { [ "$release" = 0 ] && [ -z "$target" ]; } || { echo "--delete-release cannot be combined with --release or --target" >&2; exit 1; }
 
 root=$(cd "$(dirname "$0")" && pwd)
 dist="$root/dist"
@@ -45,12 +58,24 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/gui/src-tauri/Cargo.toml" |
 
 build_target() {
   host=$(uname -s)
+  [ "$target" = deb ] && { target=linux; format=deb; }
   case "$target" in
     mac|macos)   want=Darwin; bundles=dmg ;;
     linux)       want=Linux;  bundles=deb,appimage ;;
     windows|win) want=MINGW;  bundles=nsis ;;
-    *) echo "unknown target: $target (mac, linux, windows)" >&2; exit 1 ;;
+    *) echo "unknown target: $target (mac, linux, deb, windows)" >&2; exit 1 ;;
   esac
+  if [ -n "$format" ] && [ "$target" != linux ]; then
+    echo "--format only applies to --target linux" >&2; exit 1
+  fi
+  if [ "$target" = linux ]; then
+    case "${format:-all}" in
+      all) ;;
+      deb) bundles=deb ;;
+      appimage) bundles=appimage ;;
+      *) echo "unknown --format: $format (deb, appimage, all)" >&2; exit 1 ;;
+    esac
+  fi
   case "$host" in
     $want*) ;;
     *) echo "the $target installer must be built on $target (this is $host)" >&2; exit 1 ;;
@@ -168,5 +193,39 @@ release_it() {
   echo "release done: $(gh release view "$tag" --json url -q .url 2>/dev/null || echo "$tag")"
 }
 
+delete_release() {
+  die() { echo "delete-release: $*" >&2; exit 1; }
+  run() { if [ "$dry" = 1 ]; then echo "  [dry-run] $*"; else "$@"; fi; }
+  command -v gh >/dev/null || die "gh (the GitHub CLI) is not installed"
+  gh auth status >/dev/null 2>&1 || die "gh is not logged in (gh auth login)"
+  local tag="v${del_version:-$version}"
+  cd "$root"
+  local exists=0 remote_tag=0 local_tag=0
+  gh release view "$tag" >/dev/null 2>&1 && exists=1
+  git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1 && remote_tag=1
+  git rev-parse -q --verify "refs/tags/$tag" >/dev/null && local_tag=1
+  [ "$exists" = 1 ] || [ "$remote_tag" = 1 ] || [ "$local_tag" = 1 ] || die "no release or tag $tag found"
+  echo "== delete release $tag =="
+  [ "$exists" = 1 ] && echo "  GitHub release: $(gh release view "$tag" --json url -q .url) (with its files)" || echo "  no GitHub release"
+  if [ "$keep_tag" = 1 ]; then
+    echo "  the tag is kept"
+  else
+    echo "  tag on GitHub: $([ "$remote_tag" = 1 ] && echo yes || echo no), local tag: $([ "$local_tag" = 1 ] && echo yes || echo no)"
+  fi
+  if [ "$yes" != 1 ] && [ "$dry" != 1 ]; then
+    read -r -p "Delete? This cannot be undone. [y/N] " ans
+    case "$ans" in y|Y|yes) ;; *) echo "stopped"; exit 1 ;; esac
+  fi
+  if [ "$exists" = 1 ]; then
+    if [ "$keep_tag" = 1 ]; then run gh release delete "$tag" --yes; else run gh release delete "$tag" --yes --cleanup-tag; fi
+  fi
+  if [ "$keep_tag" != 1 ]; then
+    [ "$exists" = 1 ] || [ "$remote_tag" = 0 ] || run git push origin ":refs/tags/$tag"
+    [ "$local_tag" = 0 ] || run git tag -d "$tag"
+  fi
+  echo "delete done: $tag"
+}
+
+if [ "$delete" = 1 ]; then delete_release; exit 0; fi
 if [ -n "$target" ]; then build_target; fi
 if [ "$release" = 1 ]; then release_it; fi

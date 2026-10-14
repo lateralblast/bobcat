@@ -7,6 +7,8 @@ mod html5_tools;
 mod java_console;
 #[cfg(target_os = "macos")]
 mod java_dock;
+#[cfg(target_os = "linux")]
+mod java_x11;
 mod keychain;
 
 use std::collections::HashMap;
@@ -1003,6 +1005,12 @@ fn send_pointer(state: State<Session>, buttons: u8, x: u16, y: u16) {
 }
 
 fn main() {
+    // the Java console is embedded by reparenting its X11 window, so the main window must be an X11 one
+    // (XWayland under Wayland); set GDK_BACKEND yourself to override
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none() && std::env::var_os("DISPLAY").is_some() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
     tauri::Builder::default()
         .manage(Session::default())
         .setup(|app| {

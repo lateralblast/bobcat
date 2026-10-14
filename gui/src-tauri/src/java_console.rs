@@ -436,7 +436,12 @@ fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> R
         crate::status(app, format!("Java console of {ip} opened (docking its window under the toolbar)"));
         crate::java_dock::start(app.clone(), child.id(), ip.to_string());
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::status(app, format!("Java console of {ip} opened (embedding its window under the toolbar)"));
+        crate::java_x11::start(app.clone(), child.id(), ip.to_string());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     crate::status(app, format!("Java console of {ip} opened in its own window"));
 
     let app = app.clone();
@@ -454,6 +459,23 @@ fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> R
     Ok(())
 }
 
+/// Make a screen capture easier for tesseract: grayscale, text dark on light (a light-on-dark
+/// console is inverted), enlarged 3x with bicubic smoothing. No black-and-white step: measured on a
+/// capture of a Linux text console, thresholding cost far more accuracy than it gained (about 78%
+/// character match with the grays kept, 60% or less with a threshold).
+pub(crate) fn prepare_for_ocr(png: &[u8]) -> Result<Vec<u8>, String> {
+    use image::{imageops, ImageFormat};
+    let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| e.to_string())?;
+    let mut gray = img.to_luma8();
+    let mean = gray.pixels().map(|p| p.0[0] as u64).sum::<u64>() / (gray.width() as u64 * gray.height() as u64).max(1);
+    if mean < 128 {
+        imageops::invert(&mut gray);
+    }
+    let big = imageops::resize(&gray, gray.width() * 3, gray.height() * 3, imageops::FilterType::CatmullRom);
+    let mut buf = std::io::Cursor::new(Vec::new());
+    big.write_to(&mut buf, ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(buf.into_inner())
+}
 /// The process id of the running viewer.
 pub(crate) fn current_pid() -> Option<u32> {
     *VIEWER_PID.lock().unwrap()
@@ -506,8 +528,17 @@ pub async fn java_paste() -> Result<usize, String> {
         }
         crate::java_dock::paste(&text)
     }
-    #[cfg(not(target_os = "macos"))]
-    Err("pasting into the Java viewer is only implemented on macOS".into())
+    #[cfg(target_os = "linux")]
+    {
+        let text = crate::with_clip(|c| c.get_text())?;
+        let n = text.chars().count();
+        if n > 10_000 {
+            return Err(format!("clipboard too large ({n} characters, max 10000)"));
+        }
+        tauri::async_runtime::spawn_blocking(move || crate::java_x11::paste(&text)).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    Err("pasting into the Java viewer is only implemented on macOS and Linux".into())
 }
 
 /// Read the Java viewer's screen with OCR and put the text on the clipboard (macOS).
@@ -517,6 +548,10 @@ pub async fn java_copy_text() -> Result<String, String> {
     {
         crate::java_dock::copy_text()
     }
-    #[cfg(not(target_os = "macos"))]
-    Err("copying text from the Java viewer is only implemented on macOS".into())
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(crate::java_x11::copy_text).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    Err("copying text from the Java viewer is only implemented on macOS and Linux".into())
 }

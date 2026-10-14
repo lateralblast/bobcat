@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "bobcat"
-version = "1.4.6"
+version = "1.4.8"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -379,6 +379,7 @@ dependencies = [
  "tauri-build",
  "vnc",
  "webkit2gtk",
+ "x11rb",
 ]
 
 [[package]]

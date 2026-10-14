@@ -1,6 +1,6 @@
 [package]
 name = "bobcat"
-version = "1.4.6"
+version = "1.4.9"
 edition = "2021"
 license = "CC-BY-NC-SA-4.0"
 
@@ -30,6 +30,8 @@ webkit2gtk = { version = "2", features = ["v2_6"] }
 gtk = "0.18"
 javascriptcore-rs = "1.1"
 cairo-rs = { version = "0.18", features = ["png"] }
+x11rb = { version = "0.13", features = ["xtest"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

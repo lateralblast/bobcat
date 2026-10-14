@@ -2,6 +2,25 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.4.9] - 2026-10-14
+### Added
+- `build.sh --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]`: deletes the GitHub release `v<version>` (default: the current version) with its uploaded files, and the tag on GitHub and locally unless `--keep-tag` is given. It shows what it will delete and asks first (`--yes` skips the question); `--dry-run` only prints the commands. It cannot be combined with `--release` or `--target`, and never touches commits or `dist/`. Not run yet (`gh` is not installed on the Linux machine; only the argument checks were tried).
+
+## [1.4.8] - 2026-10-14
+### Added
+- GUI Java console on Linux: the viewer's window is docked over the console area (new `java_x11.rs`, `x11rb`). bobcat finds the viewer's top-level window by `_NET_WM_PID`, makes it frameless (`_MOTIF_WM_HINTS`), transient for the main window (stays above it, minimizes with it) and keeps it laid over the area between the toolbar and the status bar, following the main window. Reparenting it into the main window was tried first and failed on hardware (mutter and the viewer's toolkit put the window back in a frame). `BOBCAT_JAVA_DOCK=0` disables it.
+- Paste for the Java console on Linux: brings the viewer to the front (`_NET_ACTIVE_WINDOW`) and types the clipboard as key presses with the XTest extension (lookup through the X keyboard layout, Shift handled, stops if the viewer stops being the active window). On GNOME/Wayland the first use shows a permission dialog (remote interaction) for XTest.
+- Copy for the Java console on Linux: reads the viewer window's pixels with GetImage (the bottom 26 px information bar is left out; `BOBCAT_JAVA_COPY_CROP="top,bottom"` in pixels), then the same grayscale/invert/3x bicubic and tesseract as on macOS. The Copy and Paste buttons now show for Java on Linux.
+### Changed
+- Linux: the GUI sets `GDK_BACKEND=x11` (XWayland under Wayland) when it is not set and `DISPLAY` exists, because only an X11 window can host the viewer. Set `GDK_BACKEND` yourself to override.
+- `prepare_for_ocr` moved from `java_dock.rs` to `java_console.rs` (shared by macOS and Linux).
+### Notes
+- Docking, Paste and Copy confirmed on hardware (Linux, GNOME on Wayland through XWayland). The first Paste typed nothing and the first attempt (reparenting) did not embed; both were reworked above. HiDPI scaling is not handled (sizes are in X pixels).
+
+## [1.4.7] - 2026-10-14
+### Added
+- `build.sh --target deb` (and `--target linux --format deb|appimage|all`, default all): build only the Debian package or only the AppImage. `--format` is refused for other targets. The deb was built on Linux (`dist/bobcat_<version>_amd64.deb`); installing it has not been tried.
+
 ## [1.4.6] - 2026-10-14
 ### Added
 - README: screenshots of the app (VNC, HTML5 and Java views; `docs/img/`, taken with the documentation address 192.0.2.10 and no password) and of the macOS installer.

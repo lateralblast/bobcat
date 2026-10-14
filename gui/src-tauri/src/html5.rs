@@ -896,7 +896,6 @@ pub fn disconnect_html5(app: AppHandle) {
 }
 
 /// The toolbar height, and the toolbar plus status bar height, as the page last reported them.
-#[cfg(target_os = "macos")]
 pub(crate) fn layout_heights() -> (f64, f64) {
     (BAR_HEIGHT.load(Ordering::SeqCst).max(0) as f64, TOP_HEIGHT.load(Ordering::SeqCst).max(0) as f64)
 }
