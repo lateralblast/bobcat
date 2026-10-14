@@ -2,6 +2,9 @@
 // Version: 1.1.9
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
+mod amt;
+#[allow(dead_code)]
+mod amt_redir;
 mod html5;
 mod html5_tools;
 mod java_console;
@@ -402,6 +405,7 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
     let mut client = Client::from_tcp_stream(tcp, true, |methods| {
         methods.iter().find_map(|m| match m {
             AuthMethod::Password => Some(AuthChoice::Password(key)),
+            AuthMethod::None => Some(AuthChoice::None), // the AMT bridge (login already done)
             _ => None,
         })
     })
@@ -541,7 +545,7 @@ fn trust_cert(kind: Option<String>) -> Result<(), String> {
 #[tauri::command]
 fn default_password(protocol: Option<String>) -> String {
     let var = match protocol.as_deref() {
-        Some("ssh") | Some("sol") | Some("html5") | Some("java") => "BOBCAT_PASS",
+        Some("ssh") | Some("sol") | Some("html5") | Some("java") | Some("amt") => "BOBCAT_PASS",
         _ => "BOBCAT_VNC_PASS",
     };
     std::env::var(var).unwrap_or_default()
@@ -869,6 +873,30 @@ fn connect(app: AppHandle, state: State<Session>, ip: String, port: u16, tls: bo
     });
 }
 
+/// Intel AMT KVM: log in on the redirection port (16994), bridge the device's RFB stream to a
+/// local port and show it in the VNC canvas. The bridge serves one viewer, so there are no retries.
+#[tauri::command]
+fn connect_amt(app: AppHandle, state: State<Session>, ip: String, user: String, pass: String, remember: bool) {
+    disconnect(state.clone());
+    let (tx, rx) = channel();
+    *state.0.lock().unwrap() = Some(tx);
+    thread::spawn(move || {
+        status(&app, format!("connecting to the AMT KVM at {ip}..."));
+        let user = if user.is_empty() { "admin".to_string() } else { user };
+        let port = match amt_redir::kvm_bridge(&ip, 16994, &user, &pass) {
+            Ok(p) => p,
+            Err(e) => return status(&app, format!("error: {e}")),
+        };
+        if remember {
+            keychain::remember(&user, &ip, &pass);
+        }
+        match run(&app, "127.0.0.1", port, false, "", false, &rx) {
+            Ok(()) => status(&app, "disconnected"),
+            Err(e) => status(&app, format!("error: {e}")),
+        }
+    });
+}
+
 #[tauri::command]
 fn disconnect(state: State<Session>) {
     if let Some(tx) = state.0.lock().unwrap().take() {
@@ -1032,7 +1060,7 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, connect_amt, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat");
 }

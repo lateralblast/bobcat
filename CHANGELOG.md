@@ -2,6 +2,18 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.8.7] - 2026-10-14
+### Added
+- GUI: an AMT protocol entry. Host, user (default `admin`) and AMT password; Connect logs in on the redirection port 16994, bridges the device's KVM to a local port (the same bridge as `bobcat-cli --amt --console vnc`, a copy of `amt_redir.rs`) and draws it in the VNC canvas, with keyboard, mouse, Paste, Copy and the on-screen keyboard. Remember keeps the AMT password in the keychain as `user@ip`; `BOBCAT_PROTOCOL=amt` and `BOBCAT_PASS` preselect. The VNC client now also accepts a server that offers no authentication. The bridge was checked on the 192.168.9.238 device with TigerVNC (live picture, input keeps the session up); the GUI's canvas stayed blank or black until the first-update fixes below; after them the GUI shows the whole picture cleanly and is fast in a release build (user's report). The device's own screen shows a flashing border while the session is open (AMT's remote session indicator).
+### Fixed
+- AMT KVM bridge: a viewer that cannot resize (the GUI's VNC client) was dropped at once, because the device answers the first update request with a DesktopSize notice of the size it already reported (3840x2160). Same-size notices are now ignored and the picture is requested again. A real size change still needs a viewer that handles it.
+- AMT KVM bridge: the first update now reaches the viewer as one full-screen Raw rectangle (assembled from the device's 64x64 tiles). The GUI's VNC client waits for exactly that before it starts, so with the tiles it stayed on a blank canvas although the bridge was running.
+- AMT KVM bridge: until the viewer sends SetPixelFormat the bridge now converts to the pixel format it announced in ServerInit (the device's native 16-bit), not to its own 8-bit one. A viewer that sends no format first (the GUI's client sends it only after the first full update) got half the bytes it expected and waited for the rest.
+- AMT KVM bridge: the first full-screen rectangle is only sent once every tile of the screen has arrived; if the device delivered the first frame in parts, the bridge asks for the whole screen again (up to 8 times) instead of leaving the missing tiles black. Cause of the black blocks seen in a release build is a guess, not confirmed.
+- AMT KVM bridge: the screen stayed black with scattered tiles in the GUI. The device sends a whole frame once and then only changed tiles, whatever it is asked (a full request right after an incremental one gave 9 tiles), and the `vnc` crate's `set_format` throws away the first full frame. The bridge now keeps its own copy of the screen and, once the viewer has set its pixel format, answers a non-incremental request from that copy instead of forwarding it. (An earlier attempt to wait for missing tiles was wrong: the first frame was complete, 0 of 2040 tiles black,; the wait for missing tiles stays in as a harmless safeguard.)
+### Notes
+- Port and TLS fields are shown for VNC only; the Certificate button is hidden for AMT.
+
 ## [1.8.6] - 2026-10-14
 ### Added
 - `--check`/`--install` on RPM distributions: the package manager is chosen from `ID`/`ID_LIKE` in `/etc/os-release` (apt, dnf, zypper; else whichever is installed) and each dependency has Fedora (`webkit2gtk4.1`, `gtk3`, `tesseract`, `rpm-build`) and openSUSE package names. The library probe also tries `/sbin/ldconfig` and `/usr/sbin/ldconfig`, which a normal user's PATH lacks on those distributions. Checked in a Fedora 42 container: `--check` names the dnf packages and `--check --install` installs them.

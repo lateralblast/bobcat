@@ -425,7 +425,24 @@ fn rle_tile(data: &[u8], w: usize, h: usize, bpp: usize) -> Result<Vec<u8>, Stri
         }
         n => return Err(format!("unknown RLE tile type {n}")),
     }
+    // a tile that did not fill, or left data over, was misread: say so (the first few only)
+    if debug() && sub >= 2 && (count < s || p != data.len()) {
+        static SHORT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if SHORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!("[bridge] short RLE tile: type {sub}, {count} of {s} pixels filled, {p} of {} bytes used", data.len());
+        }
+    }
     Ok(out)
+}
+
+/// The whole screen as one Raw rectangle in the viewer's pixel format.
+fn send_full(c: &mut TcpStream, fb: &[u8], screen: (usize, usize), src: &Pf, dst: &Pf) -> Result<(), String> {
+    let mut out = vec![0u8, 0, 0, 1, 0, 0, 0, 0];
+    out.extend_from_slice(&(screen.0 as u16).to_be_bytes());
+    out.extend_from_slice(&(screen.1 as u16).to_be_bytes());
+    out.extend_from_slice(&0i32.to_be_bytes());
+    out.extend_from_slice(&convert(fb, src, dst));
+    c.write_all(&out).map_err(|e| e.to_string())
 }
 
 /// Serve one viewer: the AMT KVM speaks RFB with 16-bit colour and a few encodings only, so the
@@ -542,9 +559,16 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
             });
         }
     }
-    let target = Arc::new(Mutex::new(src));
+    let target = Arc::new(Mutex::new(native));
 
     let viewer_ds = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // A full-screen request from a viewer that has set its pixel format is answered from the bridge's own
+    // copy of the screen: the device only resends what changed, whatever it is asked, and the GUI's
+    // client throws away the first full frame (it only waits for it before switching format).
+    let full_req = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let full_req2 = full_req.clone();
+    let seen_pf = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen_pf2 = seen_pf.clone();
     let viewer_ds2 = viewer_ds.clone();
     let mut refresh = amt.try_clone().map_err(|e| e.to_string())?;
     let (mut a_r, mut c_w, t2) = (amt.try_clone().map_err(|e| e.to_string())?, client.try_clone().map_err(|e| e.to_string())?, target.clone());
@@ -556,18 +580,38 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
         let mut inflater = flate2::Decompress::new(false);
         let mut zlib_header_seen = false;
         let mut fb = vec![0u8; screen.0 * screen.1 * 3];
+        // The first update goes to the viewer as ONE full-screen Raw rectangle (built in fb_raw from the
+        // device's tiles): some viewers, such as the GUI's VNC client, wait for exactly that
+        // before they continue.
+        let mut first_sent = false;
+        let mut fb_raw: Vec<u8> = Vec::new();
+        // tiles seen so far for that first frame: the device may deliver it in several updates, and
+        // what is not there yet would show as black blocks
+        let mut covered: Vec<bool> = Vec::new();
+        let mut covered_n = 0usize;
+        let mut cover_tries = 0;
         let mut rect_log = 0;
         let mut rle_log = 0;
         let mut msgs = 0;
         loop {
             let mut ty = [0u8; 1];
-            // wait for the next message in 5 s steps so a silent device shows up in the trace
-            a_r.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            // wait for the next message in 0.2 s steps (a pending full-screen request is answered
+            // meanwhile); a silent device shows up in the trace every 5 s
+            a_r.set_read_timeout(Some(Duration::from_millis(200))).ok();
+            let mut quiet = 0;
             loop {
+                if first_sent && !fb_raw.is_empty() && full_req.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    let dst = *t2.lock().unwrap();
+                    if debug() {
+                        eprintln!("[bridge] {:>6} ms viewer asked for the whole screen: sent from the bridge's copy", ms());
+                    }
+                    send_full(&mut c_w, &fb_raw, screen, &src, &dst)?;
+                }
                 match a_r.read_exact(&mut ty) {
                     Ok(()) => break,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
-                        if debug() {
+                        quiet += 1;
+                        if debug() && quiet % 25 == 0 {
                             eprintln!("[bridge] {:>6} ms: nothing from the device yet", ms());
                         }
                     }
@@ -603,11 +647,23 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
                             if debug() {
                                 eprintln!("[bridge] the device's screen is now {w}x{hh}");
                             }
+                            if (w, hh) == screen {
+                                // the device announces the size it already reported: nothing to tell
+                                // the viewer, but ask for the picture, as it answered with only this
+                                let mut m = vec![3u8, 0, 0, 0, 0, 0];
+                                m.extend_from_slice(&(w as u16).to_be_bytes());
+                                m.extend_from_slice(&(hh as u16).to_be_bytes());
+                                refresh.write_all(&m).map_err(|e| e.to_string())?;
+                                continue;
+                            }
                             if !viewer_ds2.load(std::sync::atomic::Ordering::SeqCst) {
                                 return Err("the device's screen changed size and the viewer cannot resize (reconnect it)".into());
                             }
                             screen = (w, hh);
                             fb = vec![0u8; w * hh * 3];
+                            fb_raw = Vec::new();
+                            covered = Vec::new();
+                            covered_n = 0;
                             out.extend_from_slice(&r);
                             emitted += 1;
                             let mut m = vec![3u8, 0, 0, 0, 0, 0];
@@ -666,11 +722,32 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
                                 return Err(format!("the device sent encoding {e}, which the bridge cannot convert yet"));
                             }
                         };
-                        let mut hdr = r;
-                        hdr[8..12].copy_from_slice(&0i32.to_be_bytes()); // the viewer gets Raw
-                        out.extend_from_slice(&hdr);
-                        out.extend_from_slice(&convert(&raw, &src, &dst));
-                        emitted += 1;
+                        // the bridge keeps the whole screen in the device's format
+                        let bp = src.bytes();
+                        if fb_raw.is_empty() {
+                            fb_raw = vec![0u8; screen.0 * screen.1 * bp];
+                            covered = vec![false; screen.0.div_ceil(64) * screen.1.div_ceil(64)];
+                            covered_n = 0;
+                        }
+                        for row in 0..hh {
+                            if ry + row < screen.1 && rx + w <= screen.0 {
+                                let d = ((ry + row) * screen.0 + rx) * bp;
+                                fb_raw[d..d + w * bp].copy_from_slice(&raw[row * w * bp..(row + 1) * w * bp]);
+                            }
+                        }
+                        if !first_sent {
+                            let ci = (ry / 64) * screen.0.div_ceil(64) + rx / 64;
+                            if ci < covered.len() && !covered[ci] {
+                                covered[ci] = true;
+                                covered_n += 1;
+                            }
+                        } else {
+                            let mut hdr = r;
+                            hdr[8..12].copy_from_slice(&0i32.to_be_bytes()); // the viewer gets Raw
+                            out.extend_from_slice(&hdr);
+                            out.extend_from_slice(&convert(&raw, &src, &dst));
+                            emitted += 1;
+                        }
                         if dump_path.is_some() {
                             for (i, px) in raw.chunks_exact(src.bytes()).enumerate() {
                                 let v = src.read(px);
@@ -682,6 +759,44 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
                                 }
                             }
                         }
+                    }
+                    if !first_sent && !fb_raw.is_empty() && covered_n < covered.len() && cover_tries < 8 {
+                        // part of the first frame is still missing: ask the device for all of it again
+                        cover_tries += 1;
+                        if debug() {
+                            eprintln!("[bridge] first frame has {covered_n} of {} tiles; asking again ({cover_tries})", covered.len());
+                        }
+                        let mut m = vec![3u8, 0, 0, 0, 0, 0];
+                        m.extend_from_slice(&(screen.0 as u16).to_be_bytes());
+                        m.extend_from_slice(&(screen.1 as u16).to_be_bytes());
+                        refresh.write_all(&m).map_err(|e| e.to_string())?;
+                        continue;
+                    }
+                    if !first_sent && !fb_raw.is_empty() {
+                        first_sent = true;
+                        if debug() {
+                            // how many tiles the device itself sent as pure black
+                            let (bp, cols) = (src.bytes(), screen.0.div_ceil(64));
+                            let mut black = 0;
+                            for t in 0..covered.len() {
+                                let (tx, ty) = ((t % cols) * 64, (t / cols) * 64);
+                                let (tw, th) = (64.min(screen.0 - tx), 64.min(screen.1 - ty));
+                                if (0..th).all(|r| fb_raw[((ty + r) * screen.0 + tx) * bp..((ty + r) * screen.0 + tx + tw) * bp].iter().all(|b| *b == 0)) {
+                                    black += 1;
+                                }
+                            }
+                            eprintln!("[bridge] first frame: {black} of {} tiles are all black as sent by the device", covered.len());
+                        }
+                        out.extend_from_slice(&[0, 0, 0, 0]);
+                        out.extend_from_slice(&(screen.0 as u16).to_be_bytes());
+                        out.extend_from_slice(&(screen.1 as u16).to_be_bytes());
+                        out.extend_from_slice(&0i32.to_be_bytes());
+                        out.extend_from_slice(&convert(&fb_raw, &src, &dst));
+                        emitted += 1;
+                        full_req.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    if emitted == 0 && out.len() == 4 {
+                        continue; // only no-op size notices: the refresh asked for above will answer
                     }
                     out[2..4].copy_from_slice(&emitted.to_be_bytes());
                     if debug() && rect_log < 3 {
@@ -747,6 +862,7 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
                     return Err("the viewer asked for a colour-mapped pixel format".into());
                 }
                 *target.lock().unwrap() = want;
+                seen_pf2.store(true, std::sync::atomic::Ordering::SeqCst);
             }
             2 => {
                 more(&mut c_r, &mut msg, 3)?;
@@ -757,7 +873,11 @@ fn serve_viewer(mut client: TcpStream, mut amt: TcpStream) -> Result<(), String>
             }
             3 => {
                 more(&mut c_r, &mut msg, 9)?;
-                a_w.write_all(&msg).map_err(|e| e.to_string())?;
+                if msg[1] == 0 && seen_pf.load(std::sync::atomic::Ordering::SeqCst) {
+                    full_req2.store(true, std::sync::atomic::Ordering::SeqCst); // answered from the bridge's copy
+                } else {
+                    a_w.write_all(&msg).map_err(|e| e.to_string())?;
+                }
             }
             4 => {
                 more(&mut c_r, &mut msg, 7)?;

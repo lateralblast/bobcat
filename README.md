@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.8.6
+Version: 1.8.7
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -88,7 +88,7 @@ add `--install` to install missing ones (and `rpmbuild`) with the platform's pac
 
 ![The Bobcat app: the VNC console view](docs/img/app-vnc.png)
 
-*The desktop app (macOS shown). The toolbar picks the protocol (VNC, HTML5, Java, SSH or SOL), the host and login, and the second row has Copy, Paste, the on-screen keyboard, the certificate button and text size.*
+*The desktop app (macOS shown). The toolbar picks the protocol (VNC, HTML5, Java, AMT, SSH or SOL), the host and login, and the second row has Copy, Paste, the on-screen keyboard, the certificate button and text size.*
 
 | HTML5 console | Java console |
 |---|---|
@@ -104,10 +104,10 @@ BOBCAT_VNC_PASS='<vnc password>' cargo run
 Requires the Tauri 2 Linux dependencies (WebKitGTK 4.1). No Node/npm needed. Enter the iDRAC IP and password
 (prefilled from `BOBCAT_VNC_PASS`) and click Connect.
 
-Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (Dell's own web console), **Java** (Dell's Java console, in a window of its own), **SSH**
+Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (Dell's own web console), **Java** (Dell's Java console, in a window of its own), **AMT** (the KVM of an Intel AMT device, drawn in the canvas like VNC: host, user `admin` and the AMT password; no port or TLS setting), **SSH**
 (the iDRAC's `console com2`) or **SOL** (IPMI Serial over LAN via `ipmitool`). HTML5, Java, SSH and SOL need the iDRAC username
 and password; SSH and SOL show a terminal.
-`BOBCAT_PROTOCOL=vnc|html5|java|ssh|sol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL, HTML5 and Java, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
+`BOBCAT_PROTOCOL=vnc|html5|java|amt|ssh|sol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL, HTML5 and Java, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
 
 - **HTML5:** logs in to the iDRAC web interface (certificate checked against the pin first) and shows its HTML5
   console inside the main window, under the toolbar (a second web view; a small certificate window flashes up for

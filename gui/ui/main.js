@@ -30,7 +30,7 @@ let savedFor = null;
 async function fillSaved() {
   // only touch the keychain (which can prompt) while Remember is ticked
   if (!$('remember').checked) { savedFor = null; return; }
-  const who = { user: $('proto').value === 'vnc' ? '' : $('user').value, ip: $('ip').value };
+  const who = { user: $('proto').value === 'vnc' ? '' : $('user').value || ($('proto').value === 'amt' ? 'admin' : ''), ip: $('ip').value };
   const pw = await invoke('saved_password', who);
   if (pw && (!$('pass').value || savedFor)) {
     $('pass').value = pw;
@@ -63,6 +63,8 @@ $('go').onclick = () => {
   } else if (proto === 'html5') {
     reportLayout();
     invoke('connect_html5', { ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember });
+  } else if (proto === 'amt') {
+    invoke('connect_amt', { ip: $('ip').value, user: $('user').value || 'admin', pass: $('pass').value, remember });
   } else if (proto === 'vnc') {
     invoke('connect', { ip: $('ip').value, port: Number($('port').value), tls: $('tls').checked, pass: $('pass').value, remember });
   } else {
@@ -456,10 +458,11 @@ listen('term-data', (e) => {
 // show only the controls that apply to the chosen protocol
 function setProto() {
   const proto = $('proto').value;
-  const kind = proto === 'vnc' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
+  const kind = proto === 'vnc' || proto === 'amt' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
   const hide = (sel, yes) => document.querySelectorAll(sel).forEach((el) => el.classList.toggle('hidden', yes));
   hide('.vnc-only', kind !== 'vnc');
-  hide('.login-only', kind === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
+  hide('.vnc-net', proto !== 'vnc');           // port and TLS are for the iDRAC's VNC server
+  hide('.login-only', proto === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
   hide('.layout-sel', kind === 'java' || kind === 'text'); // the keyboard layout pasting follows
   hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
@@ -468,9 +471,9 @@ function setProto() {
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');
   $('javanote').classList.toggle('hidden', kind !== 'java');
-  $('pass').placeholder = kind === 'vnc' ? 'VNC password' : 'iDRAC password';
+  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' ? 'AMT password' : 'iDRAC password';
   // the Certificate button shows the TLS certificate (VNC, HTML5) or SSH host key; SOL has neither
-  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java');
+  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java' || proto === 'amt');
   $('certbtn').textContent = proto === 'ssh' ? 'Host key' : 'Certificate';
   if (kind === 'text') { ensureTerm(); fit.fit(); }
   reportLayout();
