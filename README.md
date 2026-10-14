@@ -2,16 +2,17 @@
 
 # Bobcat
 
-Version: 1.8.8
+Version: 1.9.0
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
-Tested against an iDRAC8; the settings it changes are named in `CHANGELOG.md` and `RESEARCH.md`.
+It also reaches Intel AMT (vPro) machines: their KVM screen, Serial over LAN, power and boot control.
+Tested against an iDRAC8 and an Intel AMT 12 device; the settings it changes are named in `CHANGELOG.md` and `RESEARCH.md`.
 
 | Program | What it is |
 |---|---|
-| `bobcat-cli` | Command line: enables and disables iDRAC services, opens text consoles in your terminal, and shows the VNC console **as text**. |
-| `bobcat` | Desktop app (Tauri 2): the VNC console as a window, plus SSH and SOL terminals, on-screen keyboard, copy and paste. |
+| `bobcat-cli` | Command line: enables and disables iDRAC services, opens text consoles in your terminal, and shows the VNC console **as text**. With `--amt`: Intel AMT info, power, boot source, Serial over LAN and the KVM. |
+| `bobcat` | Desktop app (Tauri 2): the VNC console as a window, plus SSH and SOL terminals, the Intel AMT KVM and Serial over LAN, on-screen keyboard, copy and paste. |
 
 ## bobcat-cli
 
@@ -48,17 +49,19 @@ process arguments (`--pass` and `--vncpass` do, if you use them).
 | `--disconnect sessions` | Closes every other iDRAC session (web, virtual console, virtual media) with `racadm closessn -a`. |
 | `--disconnect all` | Both, media first. |
 
-**Intel AMT (vPro)** (over WS-Management, HTTP digest on port 16992; add `--amt`, `--ip` is the AMT address and `--user` its admin user, usually `admin`):
+**Intel AMT (vPro)** (over WS-Management, HTTP digest on port 16992, or 16993 with TLS; add `--amt`, `--ip` is the AMT address and `--user` its admin user, usually `admin`):
 
 | Option | Effect |
 |---|---|
 | `--amt` (or `--amt --info`) | Shows what the device reports: firmware, host name, provisioning, power state, redirection (SOL/IDER) and KVM state. |
 | `--amt --power status\|on\|off\|off-hard\|cycle\|reset\|sleep\|hibernate\|nmi` | Shows or changes the power state. Everything but `on` and `status` asks you to type `yes` first (`--yes` skips it). Only the states the device offers in its current power state are accepted. |
 | `--amt --enable vnc` | Turns on the AMT KVM: sets the RFB password (`--vncpass`, `BOBCAT_VNC_PASS` or the prompt; exactly 8 characters with upper case, lower case, a digit and a special character), opens VNC on port 5900 and enables the KVM service. `--disable vnc` turns it off. |
-| `--amt --console vnc` | The text conversion of the AMT KVM screen (port 5900, no TLS unless `--tls`). |
-| `--amt --console sol` | Serial over LAN through the redirection port 16994 (ipmitool does not work with AMT's SOL; it must be enabled in AMT). Disconnect with `~.` at the start of a line or Ctrl+\\. In the desktop app: protocol "AMT SOL". |
+| `--amt --boot hdd\|pxe\|cd\|diag\|bios\|normal\|status` | Chooses what the next start does: boot once from that device, enter the BIOS setup, clear the override, or show the boot settings. It powers nothing: combine it with `--power on` (machine off) or `--power reset` / `cycle`. `--boot-sol` sends the BIOS / boot text to Serial over LAN (then `--console sol`). |
+| `--amt --console vnc` | The text conversion of the AMT KVM screen, through the redirection port (16994, or 16995 with TLS) bridged to a local port. |
+| `--amt --amt-redir-test BRIDGE` | The same bridge on its own: prints a local port to point any VNC viewer at (view it from another machine than the one being captured, or it shows its own window inside the picture). |
+| `--amt --console sol` | Serial over LAN through the redirection port (16994, or 16995 with TLS; ipmitool does not work with AMT's SOL; it must be enabled in AMT). Disconnect with `~.` at the start of a line or Ctrl+\\. In the desktop app: protocol "AMT SOL". |
 
-TLS (16993) and IDER (virtual media) are not supported yet.
+With TLS enabled on the device (web services 16993, redirection 16995) bobcat uses it automatically; `--tls` / `--notls` force the choice and `--amt-port` overrides the port. The device's certificate is pinned on first use. IDER (virtual media) is not supported yet. The desktop app has AMT (KVM) and AMT SOL entries, not power or boot controls yet.
 
 **Consoles:**
 
@@ -154,15 +157,32 @@ What Bobcat adds on top of the consoles the iDRAC offers. "Not offered" means th
 | **Copy text** from the console screen | Yes: drag over the text, read with OCR (VNC; HTML5 on Linux; Java on macOS); terminal selection (SSH, SOL) | Not offered | Not offered | Not offered (a screen is pixels) |
 | Server clipboard text to your clipboard | Yes (VNC) | Not offered | Not offered | Client-dependent |
 | **Text size** zoom and **Fit window** | Yes (VNC, HTML5) | Browser zoom only | Viewer scaling | Client-dependent |
-| On-screen keyboard (US, UK, DE, FR) | Yes (VNC, SSH, SOL) | Dell's own | Dell's own | Client-dependent |
-| Several console types in one app | VNC, HTML5, Java, SSH, SOL | HTML5 only | Java only | VNC only |
+| On-screen keyboard (US, UK, DE, FR) | Yes (VNC, AMT KVM, SSH, SOL) | Dell's own | Dell's own | Client-dependent |
+| Several console types in one app | VNC, HTML5, Java, SSH, SOL, and Intel AMT (KVM, SOL) | HTML5 only | Java only | VNC only |
 | Embedded in the main window | VNC, HTML5, SSH, SOL (Java in its own window) | A browser tab | Its own window | Its own window |
-| Certificate checking | Pinned on first use for web, VNC TLS and SSH; a change blocks the connection | Browser warning each time for a self-signed certificate | The viewer's own warning dialog | Client-dependent |
+| Certificate checking | Pinned on first use for web, VNC TLS, AMT TLS and SSH; a change blocks the connection | Browser warning each time for a self-signed certificate | The viewer's own warning dialog | Client-dependent |
 | Password in the OS keychain | Yes (Remember), shared with the CLI | Browser password manager | No | Client-dependent |
 | Turn the console services on (VNC, HTML5, Java, SOL) | Yes: `bobcat-cli --enable ...` over SSH/racadm | In the iDRAC web interface | In the iDRAC web interface | No |
 | Screen as **text** in a terminal | Yes: `bobcat-cli --console vnc` | No | No | No |
 | Session released when you disconnect | Yes (graceful logout; closing the app, Ctrl+C and SIGTERM too) | When the tab closes cleanly | Only when its window is closed | Client-dependent |
 | Needs | Nothing extra for VNC, HTML5, SSH, SOL; Java 8 (downloaded for you) for the Java console | A browser | A Java runtime, and Rosetta 2 on Apple Silicon | A VNC client |
+
+### Intel AMT
+
+For an Intel AMT (vPro) machine the usual tool is MeshCommander (version 0.9.5-a was used for comparison: a Node.js web console you open in a browser, which Bobcat's AMT protocol work follows). "Not on the test device" means found on the AMT 12 device used for testing, where the device's own VNC port could not be enabled and ipmitool's SOL did not work. Rows marked *untested* are written and build but have not been run against a device.
+
+| | Bobcat | MeshCommander | ipmitool | Stock VNC client |
+|---|---|---|---|---|
+| Graphical KVM | Yes: in the app (canvas, with keyboard and mouse), or bridged to a local port for any VNC viewer | Yes, in its browser page | No | Only through Bobcat's bridge (the device's own port 5900 could not be enabled on the test device) |
+| Serial over LAN | Yes: `--console sol`, app entry "AMT SOL" | Yes | Does not work with AMT on the test device | No |
+| Power actions | `--power` (status works; the changes are *untested*) | Yes | Not tried | No |
+| Boot source (PXE, disk, CD, BIOS setup) | `--boot` (`status` works; the overrides are *untested*) | Yes | Not tried | No |
+| IDER (virtual media) | Not yet | Yes | No | No |
+| TLS | Yes, automatic when the device has it; certificate pinned on first use | Yes (an option per connection) | n/a | n/a |
+| Paste, text size, on-screen keyboard in the KVM | The same controls as the VNC console (paste and copy not yet tried on AMT) | Not checked | n/a | Client-dependent |
+| Password in the OS keychain | Yes (Remember) | Not checked | No | Client-dependent |
+| Screen as **text** in a terminal | Yes: `--amt --console vnc` (not yet tried) | No | No | No |
+| Needs | Nothing extra | Node.js and a browser | ipmitool | A VNC client |
 
 ## Building installers
 

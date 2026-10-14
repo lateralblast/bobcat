@@ -97,7 +97,7 @@ fn tls_forwarder(ip: &str, port: u16, trust_new: bool) -> Result<u16, String> {
 
 /// Trust on first use for the TLS certificate (key = the iDRAC's address, the same
 /// entry bobcat uses). A changed certificate blocks the connection.
-fn check_pin(host: &str, tls: &openssl::ssl::SslStream<TcpStream>, trust_new: bool) -> Result<(), String> {
+pub(crate) fn check_pin(host: &str, tls: &openssl::ssl::SslStream<TcpStream>, trust_new: bool) -> Result<(), String> {
     let cert = tls.ssl().peer_certificate().ok_or("the iDRAC presented no certificate")?;
     let fp = cert
         .digest(openssl::hash::MessageDigest::sha256())

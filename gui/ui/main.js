@@ -473,7 +473,7 @@ function setProto() {
   $('javanote').classList.toggle('hidden', kind !== 'java');
   $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' || proto === 'amtsol' ? 'AMT password' : 'iDRAC password';
   // the Certificate button shows the TLS certificate (VNC, HTML5) or SSH host key; SOL has neither
-  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java' || proto === 'amt' || proto === 'amtsol');
+  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java');
   $('certbtn').textContent = proto === 'ssh' ? 'Host key' : 'Certificate';
   if (kind === 'text') { ensureTerm(); fit.fit(); }
   reportLayout();

@@ -19,6 +19,8 @@ pub struct Amt {
     port: u16,
     user: String,
     pass: String,
+    /// Set when the web-services port is the TLS one (16993): looks at the device's certificate
+    pin: Option<crate::amt_redir::Pin>,
     /// The firmware version from the `Server:` header of the last answer
     pub server: std::cell::RefCell<String>,
 }
@@ -153,15 +155,23 @@ fn xml_escape(s: &str) -> String {
 }
 
 impl Amt {
-    pub fn new(ip: &str, port: u16, user: &str, pass: &str) -> Amt {
-        Amt { ip: ip.into(), port, user: user.into(), pass: pass.into(), server: Default::default() }
+    pub fn new(ip: &str, port: u16, user: &str, pass: &str, pin: Option<crate::amt_redir::Pin>) -> Amt {
+        Amt { ip: ip.into(), port, user: user.into(), pass: pass.into(), pin, server: Default::default() }
     }
 
     fn request(&self, body: &str, auth: Option<&str>) -> Result<Resp, String> {
-        let addr = (self.ip.as_str(), self.port).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad address")?;
-        let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| format!("cannot connect to {}:{} ({e})", self.ip, self.port))?;
-        s.set_read_timeout(Some(Duration::from_secs(30))).ok();
-        s.set_write_timeout(Some(Duration::from_secs(10))).ok();
+        trait Conn: Read + Write {}
+        impl<T: Read + Write> Conn for T {}
+        let mut s: Box<dyn Conn> = match &self.pin {
+            Some(pin) => Box::new(crate::amt_redir::tls_connect(&self.ip, self.port, &**pin)?),
+            None => {
+                let addr = (self.ip.as_str(), self.port).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad address")?;
+                let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| format!("cannot connect to {}:{} ({e})", self.ip, self.port))?;
+                tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
+                tcp.set_write_timeout(Some(Duration::from_secs(10))).ok();
+                Box::new(tcp)
+            }
+        };
         let mut req = format!(
             "POST /wsman HTTP/1.1\r\nHost: {}:{}\r\nContent-Type: application/soap+xml;charset=UTF-8\r\nContent-Length: {}\r\nConnection: close\r\n",
             self.ip,
@@ -180,6 +190,8 @@ impl Amt {
             match s.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                // a TLS peer that just closes (no close_notify) ends the answer like a plain EOF
+                Err(_) if !buf.is_empty() && self.pin.is_some() => break,
                 Err(e) => return Err(format!("reading from the AMT device: {e}")),
             }
         }
@@ -355,16 +367,72 @@ impl Amt {
         Ok(())
     }
 
+    // ---- boot source ---------------------------------------------------------------------
+
+    /// Print the boot settings the device holds (what the next power-on or reset will do).
+    pub fn boot_status(&self) -> Result<(), String> {
+        let xml = self.get(&format!("{AMT}/AMT_BootSettingData"))?;
+        let get = |n: &str| field(&xml, n).unwrap_or_else(|| "?".into());
+        println!("Boot settings of {}:{}", self.ip, self.port);
+        println!("  BIOS setup: {}, BIOS pause: {}, safe mode: {}, SOL for the boot text: {}, IDER: {}", get("BIOSSetup"), get("BIOSPause"), get("UseSafeMode"), get("UseSOL"), get("UseIDER"));
+        println!("  reflash BIOS: {}, options cleared: {}, owner: {}", get("ReflashBIOS"), get("OptionsCleared"), get("OwningEntity"));
+        Ok(())
+    }
+
+    /// Choose what the NEXT start does: boot from a device once, enter the BIOS setup, or (Normal)
+    /// clear any override. It takes effect at the next power-on or reset; it does not power anything.
+    /// With `sol` the BIOS / boot text is redirected to Serial over LAN.
+    pub fn set_boot(&self, what: BootSource, sol: bool) -> Result<(), String> {
+        // 1. the boot settings: BIOS setup yes/no, SOL yes/no (a separate Put of the whole instance)
+        const KEEP: &[&str] = &[
+            "BIOSPause", "BIOSSetup", "BootMediaIndex", "ConfigurationDataReset", "ElementName", "EnforceSecureBoot", "FirmwareVerbosity",
+            "ForcedProgressEvents", "IDERBootDevice", "InstanceID", "LockKeyboard", "LockPowerButton", "LockResetButton", "LockSleepButton",
+            "OptionsCleared", "OwningEntity", "ReflashBIOS", "SecureErase", "UseIDER", "UseSOL", "UseSafeMode", "UserPasswordBypass",
+        ];
+        let bios = if what == BootSource::Bios { "true" } else { "false" };
+        let body = self
+            .put_body(AMT, "AMT_BootSettingData", &[("BIOSSetup", bios), ("UseSOL", if sol { "true" } else { "false" }), ("UseIDER", "false")], KEEP)
+            .map_err(|e| format!("reading the boot settings: {e}"))?;
+        self.put(&format!("{AMT}/AMT_BootSettingData"), &body).map_err(|e| format!("saving the boot settings: {e}"))?;
+        // 2. the boot device: one of AMT's "Force ... Boot" sources, or none
+        let cfg = format!("{CIM}/CIM_BootConfigSetting");
+        let anon = "<a:Address>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:Address>";
+        let input = match what.source_id() {
+            Some(id) => format!(
+                "<p:ChangeBootOrder_INPUT xmlns:p=\"{cfg}\"><p:Source>{anon}<a:ReferenceParameters><w:ResourceURI>{CIM}/CIM_BootSourceSetting</w:ResourceURI><w:SelectorSet><w:Selector Name=\"InstanceID\">{}</w:Selector></w:SelectorSet></a:ReferenceParameters></p:Source></p:ChangeBootOrder_INPUT>",
+                xml_escape(id)
+            ),
+            None => format!("<p:ChangeBootOrder_INPUT xmlns:p=\"{cfg}\"/>"),
+        };
+        self.invoke(&cfg, "ChangeBootOrder", &[("InstanceID", "Intel(r) AMT: Boot Configuration 0")], &input)
+            .map_err(|e| format!("setting the boot device: {e}"))?;
+        // 3. make that configuration the one used next (role 1 = IsNext)
+        let svc = format!("{CIM}/CIM_BootService");
+        let input = format!(
+            "<p:SetBootConfigRole_INPUT xmlns:p=\"{svc}\"><p:BootConfigSetting>{anon}<a:ReferenceParameters><w:ResourceURI>{cfg}</w:ResourceURI><w:SelectorSet><w:Selector Name=\"InstanceID\">Intel(r) AMT: Boot Configuration 0</w:Selector></w:SelectorSet></a:ReferenceParameters></p:BootConfigSetting><p:Role>1</p:Role></p:SetBootConfigRole_INPUT>"
+        );
+        let selectors = [("Name", "Intel(r) AMT Boot Service"), ("CreationClassName", "CIM_BootService"), ("SystemCreationClassName", "CIM_ComputerSystem"), ("SystemName", "Intel(r) AMT")];
+        self.invoke(&svc, "SetBootConfigRole", &selectors, &input).map_err(|e| format!("activating the boot configuration: {e}"))?;
+        Ok(())
+    }
+
     // ---- KVM (RFB on port 5900) ------------------------------------------------------------
 
     /// The KVM settings instance rebuilt as a Put body, with some fields changed.
     fn kvm_put_body(&self, changes: &[(&str, &str)], keep: &[&str]) -> Result<String, String> {
-        let xml = self.get(&format!("{IPS}/IPS_KVMRedirectionSettingData"))?;
-        let start = xml.find("IPS_KVMRedirectionSettingData>").ok_or("no KVM settings in the answer")?;
-        let inner_start = start + "IPS_KVMRedirectionSettingData>".len();
-        // the instance ends at its own closing tag, </x:IPS_KVMRedirectionSettingData>
-        let close_name = xml[inner_start..].find("IPS_KVMRedirectionSettingData>").ok_or("bad KVM settings")? + inner_start;
-        let end = xml[..close_name].rfind("</").ok_or("bad KVM settings")?;
+        self.put_body(IPS, "IPS_KVMRedirectionSettingData", changes, keep)
+    }
+
+    /// A settings instance (`class` in the schema `ns`) read from the device and rebuilt as a Put
+    /// body: `changes` applied, and only the properties in `keep` (the writable ones) sent back.
+    fn put_body(&self, ns: &str, class: &str, changes: &[(&str, &str)], keep: &[&str]) -> Result<String, String> {
+        let xml = self.get(&format!("{ns}/{class}"))?;
+        let marker = format!("{class}>");
+        let start = xml.find(&marker).ok_or_else(|| format!("no {class} in the answer"))?;
+        let inner_start = start + marker.len();
+        // the instance ends at its own closing tag, </x:Class>
+        let close_name = xml[inner_start..].find(&marker).ok_or_else(|| format!("bad {class}"))? + inner_start;
+        let end = xml[..close_name].rfind("</").ok_or_else(|| format!("bad {class}"))?;
         let inner = &xml[inner_start..end];
         // children: <x:Name>value</x:Name>
         let mut items: Vec<(String, String)> = Vec::new();
@@ -395,9 +463,9 @@ impl Amt {
         // only the properties that may be written: the device refuses the read-only capability flags
         items.retain(|(n, _)| keep.contains(&n.as_str()));
         items.sort_by(|a, b| a.0.cmp(&b.0));
-        let ns = format!("{IPS}/IPS_KVMRedirectionSettingData");
+        let ns = format!("{ns}/{class}");
         let children: String = items.iter().map(|(n, v)| format!("<g:{n}>{v}</g:{n}>")).collect();
-        Ok(format!("<g:IPS_KVMRedirectionSettingData xmlns:g=\"{ns}\">{children}</g:IPS_KVMRedirectionSettingData>"))
+        Ok(format!("<g:{class} xmlns:g=\"{ns}\">{children}</g:{class}>"))
     }
 
     fn kvm_state(&self, requested: u32) -> Result<(), String> {
@@ -477,6 +545,32 @@ impl Amt {
         self.kvm_put(&[("Is5900PortEnabled", "false")]).map_err(|e| format!("saving the KVM settings: {e}"))?;
         self.kvm_state(3).map_err(|e| format!("port 5900 was turned off but disabling the KVM service failed: {e}"))?;
         Ok(())
+    }
+}
+
+/// What the next start of the managed system should do.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BootSource {
+    Hdd,
+    Pxe,
+    Cd,
+    Diag,
+    /// Enter the BIOS setup
+    Bios,
+    /// No override
+    Normal,
+}
+
+impl BootSource {
+    /// The CIM_BootSourceSetting InstanceID AMT uses for the device.
+    fn source_id(self) -> Option<&'static str> {
+        match self {
+            BootSource::Hdd => Some("Intel(r) AMT: Force Hard-drive Boot"),
+            BootSource::Pxe => Some("Intel(r) AMT: Force PXE Boot"),
+            BootSource::Cd => Some("Intel(r) AMT: Force CD/DVD Boot"),
+            BootSource::Diag => Some("Intel(r) AMT: Force Diagnostic Boot"),
+            BootSource::Bios | BootSource::Normal => None,
+        }
     }
 }
 

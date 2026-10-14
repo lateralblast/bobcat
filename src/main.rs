@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.8.8
+// Version: 1.9.0
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -102,6 +102,39 @@ impl Power {
             Power::Off => Some(8),
             Power::Reset => Some(10),
             Power::Nmi => Some(11),
+        }
+    }
+}
+
+/// What the next start of an Intel AMT machine should do (`--amt --boot`)
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Boot {
+    /// Show the device's boot settings
+    Status,
+    /// Boot from the hard drive
+    Hdd,
+    /// Boot from the network (PXE)
+    Pxe,
+    /// Boot from a CD/DVD (or an IDER image)
+    Cd,
+    /// Boot the diagnostic partition
+    Diag,
+    /// Enter the BIOS setup
+    Bios,
+    /// Clear any boot override
+    Normal,
+}
+
+impl Boot {
+    fn source(self) -> Option<amt::BootSource> {
+        match self {
+            Boot::Status => None,
+            Boot::Hdd => Some(amt::BootSource::Hdd),
+            Boot::Pxe => Some(amt::BootSource::Pxe),
+            Boot::Cd => Some(amt::BootSource::Cd),
+            Boot::Diag => Some(amt::BootSource::Diag),
+            Boot::Bios => Some(amt::BootSource::Bios),
+            Boot::Normal => Some(amt::BootSource::Normal),
         }
     }
 }
@@ -214,9 +247,12 @@ struct Args {
     #[arg(long)]
     amt: bool,
 
-    /// With --amt, the AMT web-services port (16992 is plain HTTP; TLS on 16993 is not supported yet)
-    #[arg(long, default_value_t = 16992)]
-    amt_port: u16,
+    /// With --amt, the AMT web-services port (default 16992, or 16993 with TLS). With TLS the
+    /// redirection port is 16995 (SOL, KVM). TLS is used when the device answers on 16993; --tls and
+    /// --notls force the choice. The device's certificate is pinned like an iDRAC's (--trust-new-hostkey
+    /// accepts a changed one)
+    #[arg(long)]
+    amt_port: Option<u16>,
 
     /// With --amt, show what the device reports (firmware, power, provisioning, KVM, redirection)
     #[arg(long, requires = "amt")]
@@ -235,6 +271,16 @@ struct Args {
     /// show what the device sends next (for checking the redirection protocol)
     #[arg(long, requires = "amt", hide = true, value_name = "SOL|IDER|KVMR|BRIDGE")]
     amt_redir_test: Option<String>,
+
+    /// With --amt, choose what the NEXT start does: boot once from hdd, pxe, cd or diag, enter the
+    /// BIOS setup (bios), clear the override (normal) or show the boot settings (status). It does not
+    /// power anything: combine it with --power on (machine off) or --power reset / cycle
+    #[arg(long, value_enum, requires = "amt")]
+    boot: Option<Boot>,
+
+    /// With --boot, redirect the BIOS / boot text to Serial over LAN (then use --console sol)
+    #[arg(long, requires = "boot")]
+    boot_sol: bool,
 
     /// Do not ask before a power change
     #[arg(long, requires = "power")]
@@ -909,10 +955,12 @@ fn ssh_goodbye(sess: &Session, ch: &mut ssh2::Channel, send_quit: bool) {
 
 /// Intel AMT Serial over LAN through the redirection port (16994); ipmitool cannot talk to AMT's SOL.
 /// Press ~. (at the start of a line) or Ctrl+\\ to disconnect.
-fn console_amt_sol(ip: &str, user: &str, pass: &str) -> Result<(), String> {
+fn console_amt_sol(args: &Args, pass: &str) -> Result<(), String> {
     install_signal_handlers();
-    let user = if user.is_empty() { "admin" } else { user };
-    let (writer, mut reader) = amt_redir::sol_open(ip, 16994, user, pass)?;
+    let ip = args.ip.as_str();
+    let user = if args.user.is_empty() { "admin" } else { args.user.as_str() };
+    let (rport, rpin) = amt_redir_target(args);
+    let (writer, mut reader) = amt_redir::sol_open(ip, rport, user, pass, rpin)?;
     eprintln!("Connected to the AMT serial console of {ip}. Press ~. (at the start of a line) or Ctrl+\\ to disconnect.");
     let raw = RawMode::enter()?;
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1172,7 +1220,7 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
         disconnect(&sess, &args.disconnect)?;
     }
     match args.console {
-        Some(Console::Sol) if args.amt => console_amt_sol(&args.ip, &args.user, pass)?,
+        Some(Console::Sol) if args.amt => console_amt_sol(args, pass)?,
         Some(Console::Ssh) if args.amt => {
             return Err("with --amt, --console works with vnc (the KVM) and sol (Serial over LAN); there is no SSH".into());
         }
@@ -1194,7 +1242,8 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
             // the AMT KVM is reached through the redirection port 16994 and bridged to a local port
             // (the device's own 5900 port could not be enabled on the test device); no VNC password
             let (host, port, tls) = if args.amt {
-                let local = amt_redir::kvm_bridge(&args.ip, 16994, &args.user, pass)?;
+                let (rport, rpin) = amt_redir_target(args);
+                let local = amt_redir::kvm_bridge(&args.ip, rport, &args.user, pass, rpin)?;
                 println!("AMT KVM bridged to 127.0.0.1:{local}");
                 ("127.0.0.1".to_string(), local, false)
             } else {
@@ -1286,6 +1335,27 @@ fn disconnect(sess: &Session, what: &[Disconnect]) -> Result<(), String> {
 }
 
 /// Everything `--amt` asks for. Returns the RFB password it set, if any (for `--console vnc`).
+/// Does the AMT device get TLS? --tls / --notls decide; otherwise it is used when port 16993 answers.
+fn amt_tls(args: &Args) -> bool {
+    if args.tls {
+        true
+    } else if args.notls {
+        false
+    } else {
+        amt_redir::tls_available(&args.ip)
+    }
+}
+
+/// The redirection port (SOL, KVM) and, with TLS, the certificate check for it.
+fn amt_redir_target(args: &Args) -> (u16, Option<amt_redir::Pin>) {
+    if amt_tls(args) {
+        let (ip, trust_new) = (args.ip.clone(), args.trust_new_hostkey);
+        (16995, Some(Box::new(move |t| vnc_text::check_pin(&ip, t, trust_new))))
+    } else {
+        (16994, None)
+    }
+}
+
 fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
     if !args.disconnect.is_empty() {
         return Err("--disconnect is for iDRAC sessions, not --amt".into());
@@ -1293,10 +1363,22 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
     if args.enable.iter().chain(&args.disable).any(|f| *f != Feature::Vnc) {
         return Err("with --amt only --enable vnc / --disable vnc apply (the AMT KVM)".into());
     }
-    let device = amt::Amt::new(&args.ip, args.amt_port, &args.user, pass);
-    let nothing = !args.info && !args.amt_diagnose_kvm && args.amt_redir_test.is_none() && args.power.is_none() && args.enable.is_empty() && args.disable.is_empty() && args.console.is_none();
+    let tls = amt_tls(args);
+    let (ip, trust_new) = (args.ip.clone(), args.trust_new_hostkey);
+    let pin: Option<amt_redir::Pin> = if tls { Some(Box::new(move |t| vnc_text::check_pin(&ip, t, trust_new))) } else { None };
+    let device = amt::Amt::new(&args.ip, args.amt_port.unwrap_or(if tls { 16993 } else { 16992 }), &args.user, pass, pin);
+    let nothing = !args.info && !args.amt_diagnose_kvm && args.amt_redir_test.is_none() && args.power.is_none() && args.boot.is_none() && args.enable.is_empty() && args.disable.is_empty() && args.console.is_none();
     if args.info || nothing {
         device.info()?;
+    }
+    if let Some(b) = args.boot {
+        match b.source() {
+            None => device.boot_status()?,
+            Some(src) => {
+                device.set_boot(src, args.boot_sol)?;
+                println!("boot setting saved; it applies at the next power-on or reset{}", if args.power.is_none() { " (add --power on / reset / cycle to start it now)" } else { "" });
+            }
+        }
     }
     if let Some(p) = args.power {
         match p.amt_state() {
@@ -1320,7 +1402,8 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
             if device.is_this_machine() {
                 eprintln!("warning: the AMT device reports this machine's host name; a viewer on this machine shows its own window inside the captured screen (cascading copies). View it from another machine or on a second display.");
             }
-            let local = amt_redir::kvm_bridge(&args.ip, 16994, &args.user, pass)?;
+            let (rport, rpin) = amt_redir_target(args);
+            let local = amt_redir::kvm_bridge(&args.ip, rport, &args.user, pass, rpin)?;
             println!("AMT KVM bridged to 127.0.0.1:{local}: connect a VNC viewer there (Ctrl+C stops)");
             loop {
                 thread::sleep(Duration::from_secs(3600));
@@ -1332,6 +1415,9 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
             "KVMR" | "KVM" => b"KVMR",
             _ => return Err("--amt-redir-test takes SOL, IDER, KVMR or BRIDGE".into()),
         };
+        if amt_tls(args) {
+            return Err("--amt-redir-test SOL/IDER/KVMR talks to the plain port; use --notls, or --amt-redir-test BRIDGE, or --console sol".into());
+        }
         amt_redir::test(&args.ip, 16994, proto, &args.user, pass)?;
         return Ok(None);
     }

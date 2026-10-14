@@ -11,6 +11,91 @@ use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 
+// ---- TLS ---------------------------------------------------------------------------------------
+// With TLS on, WS-Management is on 16993 and the redirection protocol (KVM, SOL, IDER) on 16995; the
+// firmware speaks TLS 1.0-1.2 with old cipher suites and no secure renegotiation, so the connection
+// is opened with those allowed. The certificate is the device's own (usually self-signed): it is not
+// verified but pinned by the caller (trust on first use). The redirection protocol is bridged
+// through a local plain port, so the rest of this file does not need to know about TLS.
+
+/// Checks the certificate of a freshly opened TLS connection (the caller's pin logic).
+pub type Pin = Box<dyn Fn(&openssl::ssl::SslStream<TcpStream>) -> Result<(), String> + Send>;
+
+/// Does the device answer on its TLS web-services port (16993)?
+pub fn tls_available(ip: &str) -> bool {
+    (ip, 16993).to_socket_addrs().ok().and_then(|mut a| a.next()).is_some_and(|a| TcpStream::connect_timeout(&a, Duration::from_secs(2)).is_ok())
+}
+
+/// Open a TLS connection to the device and let `pin` look at its certificate.
+pub fn tls_connect(ip: &str, port: u16, pin: &dyn Fn(&openssl::ssl::SslStream<TcpStream>) -> Result<(), String>) -> Result<openssl::ssl::SslStream<TcpStream>, String> {
+    use openssl::ssl::{SslConnector, SslMethod, SslOptions, SslVerifyMode, SslVersion};
+    let addr = (ip, port).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad address")?;
+    let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| format!("cannot connect to {ip}:{port} ({e})"))?;
+    tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(10))).ok();
+    tcp.set_nodelay(true).ok();
+    let mut b = SslConnector::builder(SslMethod::tls()).map_err(|e| e.to_string())?;
+    b.set_verify(SslVerifyMode::NONE);
+    b.set_min_proto_version(Some(SslVersion::TLS1)).map_err(|e| e.to_string())?;
+    b.set_max_proto_version(Some(SslVersion::TLS1_2)).map_err(|e| e.to_string())?;
+    b.set_cipher_list("ALL:@SECLEVEL=0").map_err(|e| e.to_string())?;
+    b.set_options(SslOptions::ALLOW_UNSAFE_LEGACY_RENEGOTIATION);
+    let mut cfg = b.build().configure().map_err(|e| e.to_string())?;
+    cfg.set_verify_hostname(false);
+    cfg.set_use_server_name_indication(false);
+    let tls = cfg.connect(ip, tcp).map_err(|e| format!("TLS handshake with {ip}:{port} failed: {e}"))?;
+    pin(&tls)?;
+    Ok(tls)
+}
+
+/// Connect to the device over TLS now and relay one local plain connection to it; returns the local port.
+fn tls_forward(ip: &str, port: u16, pin: Pin) -> Result<u16, String> {
+    let tls = tls_connect(ip, port, &*pin)?;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let local = listener.local_addr().map_err(|e| e.to_string())?.port();
+    thread::spawn(move || {
+        let Ok((mut local_conn, _)) = listener.accept() else { return };
+        let mut tls = tls;
+        let would_block = |e: &std::io::Error| matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut);
+        // one thread polls both sides: the local side without waiting, the device side for 2 ms
+        local_conn.set_nonblocking(true).ok();
+        local_conn.set_nodelay(true).ok();
+        tls.get_ref().set_read_timeout(Some(Duration::from_millis(2))).ok();
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match tls.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => {
+                    // the local side is non-blocking: write it all
+                    let mut off = 0;
+                    while off < n {
+                        match local_conn.write(&buf[off..n]) {
+                            Ok(w) => off += w,
+                            Err(e) if would_block(&e) => thread::sleep(Duration::from_millis(1)),
+                            Err(_) => return,
+                        }
+                    }
+                    continue;
+                }
+                Err(e) if would_block(&e) => {}
+                Err(_) => return,
+            }
+            match local_conn.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => {
+                    if tls.write_all(&buf[..n]).is_err() {
+                        return;
+                    }
+                    tls.flush().ok();
+                }
+                Err(e) if would_block(&e) => {}
+                Err(_) => return,
+            }
+        }
+    });
+    Ok(local)
+}
+
 fn debug() -> bool {
     std::env::var_os("BOBCAT_DEBUG").is_some()
 }
@@ -210,8 +295,13 @@ pub fn test(ip: &str, port: u16, proto: &[u8; 4], user: &str, pass: &str) -> Res
 ///   client picks 1 (None; the redirection login already authenticated) -> SecurityResult.
 /// The first local connection is then given a plain RFB 3.8 opening (version, "None", result) and
 /// joined to the device, which waits for ClientInit.
-pub fn kvm_bridge(ip: &str, port: u16, user: &str, pass: &str) -> Result<u16, String> {
-    let mut amt = open(ip, port, b"KVMR", user, pass)?;
+pub fn kvm_bridge(ip: &str, port: u16, user: &str, pass: &str, pin: Option<Pin>) -> Result<u16, String> {
+    // with TLS (port 16995) the session goes through a local relay
+    let (host, port) = match pin {
+        Some(p) => ("127.0.0.1".to_string(), tls_forward(ip, port, p)?),
+        None => (ip.to_string(), port),
+    };
+    let mut amt = open(&host, port, b"KVMR", user, pass)?;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let local = listener.local_addr().map_err(|e| e.to_string())?.port();
     send(&mut amt, &KVM_START)?;
@@ -1020,8 +1110,12 @@ impl SolReader {
 }
 
 /// Log in on the redirection port, start a SOL session and return its two halves.
-pub fn sol_open(ip: &str, port: u16, user: &str, pass: &str) -> Result<(SolWriter, SolReader), String> {
-    let mut s = open(ip, port, b"SOL ", user, pass)?;
+pub fn sol_open(ip: &str, port: u16, user: &str, pass: &str, pin: Option<Pin>) -> Result<(SolWriter, SolReader), String> {
+    let (host, port) = match pin {
+        Some(p) => ("127.0.0.1".to_string(), tls_forward(ip, port, p)?),
+        None => (ip.to_string(), port),
+    };
+    let mut s = open(&host, port, b"SOL ", user, pass)?;
     // settings: max transmit buffer, transmit timeout, overflow timeout, receive timeout, flush timeout, heartbeat
     let mut set = vec![0x20, 0, 0, 0];
     set.extend_from_slice(&1u32.to_le_bytes());

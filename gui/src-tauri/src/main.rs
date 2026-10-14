@@ -673,10 +673,22 @@ fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, c
     Ok(())
 }
 
+/// The AMT redirection port and, when the device has TLS on (it answers on 16993), the certificate check
+/// for it (trust on first use, like the iDRAC's; the Certificate button shows it).
+fn amt_target(ip: &str) -> (u16, Option<amt_redir::Pin>) {
+    if amt_redir::tls_available(ip) {
+        let ip = ip.to_string();
+        (16995, Some(Box::new(move |t| check_pin(&ip, t))))
+    } else {
+        (16994, None)
+    }
+}
+
 /// Intel AMT Serial over LAN through the redirection port (ipmitool cannot talk to AMT's SOL).
 fn text_amtsol(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
     let user = if user.is_empty() { "admin" } else { user };
-    let (writer, mut reader) = amt_redir::sol_open(ip, 16994, user, pass)?;
+    let (rport, pin) = amt_target(ip);
+    let (writer, mut reader) = amt_redir::sol_open(ip, rport, user, pass, pin)?;
     if remember {
         keychain::remember(user, ip, pass);
     }
@@ -933,7 +945,8 @@ fn connect_amt(app: AppHandle, state: State<Session>, ip: String, user: String, 
     thread::spawn(move || {
         status(&app, format!("connecting to the AMT KVM at {ip}..."));
         let user = if user.is_empty() { "admin".to_string() } else { user };
-        let port = match amt_redir::kvm_bridge(&ip, 16994, &user, &pass) {
+        let (rport, pin) = amt_target(&ip);
+        let port = match amt_redir::kvm_bridge(&ip, rport, &user, &pass, pin) {
             Ok(p) => p,
             Err(e) => return status(&app, format!("error: {e}")),
         };

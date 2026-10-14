@@ -2,9 +2,22 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.9.0] - 2026-10-15
+### Added
+- Intel AMT boot source control: `bobcat-cli --amt --boot hdd|pxe|cd|diag|bios|normal|status` chooses what the NEXT start does (boot once from a device, enter the BIOS setup, clear the override, or show the device's boot settings); `--boot-sol` sends the BIOS / boot text to Serial over LAN (then `--console sol`). It powers nothing, so combine it with `--power on` (machine off) or `--power reset` / `cycle`, e.g. `--amt --boot pxe --power reset`. Three steps, as in Intel's boot-control documentation: a Put of `AMT_BootSettingData` (BIOSSetup, UseSOL, UseIDER=false), `CIM_BootConfigSetting.ChangeBootOrder` with the source `Intel(r) AMT: Force Hard-drive / PXE / CD/DVD / Diagnostic Boot` (none for bios and normal), and `CIM_BootService.SetBootConfigRole` (role 1, IsNext) for `Intel(r) AMT: Boot Configuration 0`. Written from the documented class and instance names; NOT yet run against a device (the Put instance is rebuilt from a Get, like the KVM one, with only the writable properties sent back). The GUI has no AMT power or boot controls yet.
+### Changed
+- The KVM settings Put body builder is now a general `put_body` (class and schema as parameters) shared with the boot settings.
+
+## [1.8.9] - 2026-10-15
+### Added
+- Intel AMT over TLS: WS-Management on 16993 (`--info`, `--power`, `--enable vnc`) and the redirection protocol on 16995 (`--console sol`, the KVM bridge, and the GUI's AMT and AMT SOL). Used automatically when the device answers on 16993 (`--tls` / `--notls` force it; `--amt-port` now defaults to 16992, or 16993 with TLS). The firmware needs TLS 1.0-1.2 with old ciphers and no secure renegotiation, so those are allowed (`SECLEVEL=0`, `ALLOW_UNSAFE_LEGACY_RENEGOTIATION`); the device's certificate (self-signed here) is not verified but pinned on first use like an iDRAC's (`--trust-new-hostkey` accepts a changed one; in the GUI the Certificate button shows and trusts it). The redirection session reaches TLS through a local relay (`tls_forward` in `amt_redir.rs`), so the KVM and SOL code is unchanged.
+### Notes
+- With TLS-only provisioning the plain ports 16992/16994 stop answering on the 192.168.9.238 device, so TLS is now needed there. Checked with `openssl s_client`: TLS 1.2, AES128-GCM-SHA256, handshake only with legacy renegotiation allowed. Works end to end in bobcat on that device (CLI, and the GUI's AMT and AMT SOL; user's report).
+- `--amt-redir-test SOL|IDER|KVMR` still uses the plain port only.
+
 ## [1.8.8] - 2026-10-15
 ### Added
-- Intel AMT Serial over LAN, without ipmitool (AMT's SOL does not work with it, MeshCommander's does): `bobcat-cli --amt --console sol` and an "AMT SOL" entry in the GUI's protocol list (xterm.js, no port or certificate settings; user defaults to `admin`; Remember keeps the AMT password in the keychain). It uses the redirection port 16994: login, a SOL settings message, ready message, then output in 0x2A messages and input in 0x28 messages with a keep-alive every 2 s (`amt_redir.rs`: `sol_open`, `SolWriter`, `SolReader`; the protocol follows MeshCommander's `CreateAmtRedirect`, protocol 1). The CLI escape is `~.` at the start of a line or Ctrl+\\. Works on the 192.168.9.238 test device (SOL had to be enabled in AMT first; ipmitool does not work with it). With `BOBCAT_DEBUG=1` the protocol trace goes to the same terminal and disconnecting was awkward once; without it, it is fine.
+- Intel AMT Serial over LAN, without ipmitool (AMT's SOL does not work with it, MeshCommander's does): `bobcat-cli --amt --console sol` and an "AMT SOL" entry in the GUI's protocol list (xterm.js, no port or certificate settings; user defaults to `admin`; Remember keeps the AMT password in the keychain). It uses the redirection port 16994: login, a SOL settings message, ready message, then output in 0x2A messages and input in 0x28 messages with a keep-alive every 2 s (`amt_redir.rs`: `sol_open`, `SolWriter`, `SolReader`; the protocol follows MeshCommander's `CreateAmtRedirect`, protocol 1). The CLI escape is `~.` at the start of a line or Ctrl+\\. Works on the 192.168.9.238 test device, in the CLI and in the GUI (connect, typing, disconnect) (SOL had to be enabled in AMT first; ipmitool does not work with it). With `BOBCAT_DEBUG=1` the protocol trace goes to the same terminal and disconnecting was awkward once; without it, it is fine.
 ### Changed
 - `--amt --console ssh` is refused with a clearer message.
 
