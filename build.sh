@@ -73,7 +73,8 @@ native_package() {
 # Windows from a Linux host: the installer and bobcat-cli are built in the Windows 11 VM (windows/vm.py)
 windows_vm() {
   command -v python3 >/dev/null || { echo "python3 not found (windows/vm.py needs it)" >&2; exit 1; }
-  python3 -I "$root/windows/vm.py" build
+  vmrc=0
+  python3 -I "$root/windows/vm.py" build || vmrc=$?
   mkdir -p "$dist"
   found=0
   for f in "$root"/windows/out/bundle/nsis/*-setup.exe; do
@@ -84,6 +85,10 @@ windows_vm() {
   if [ "$cli" = 1 ] && [ -f "$root/windows/out/bundle/cli/bobcat-cli.exe" ]; then
     cp "$root/windows/out/bundle/cli/bobcat-cli.exe" "$dist/bobcat-cli-$version-windows.exe"
     echo "  $dist/bobcat-cli-$version-windows.exe"
+  fi
+  if [ "$vmrc" != 0 ]; then
+    echo "the Windows build failed (see windows/out/build.log); the files above are what was built before it failed" >&2
+    exit "$vmrc"
   fi
   echo "done: $dist"
 }
