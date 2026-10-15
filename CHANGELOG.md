@@ -2,6 +2,10 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.9.4] - 2026-10-15
+### Added
+- `bobcat-cli --check` reports `gh` (the GitHub CLI, needed only for `build.sh --release` and `--delete-release`; optional, never fails the check). `--check --install` installs it where the package manager has one (apt/dnf `gh`, zypper `github-cli`, Homebrew `gh`). It still needs `gh auth login` afterwards.
+
 ## [1.9.3] - 2026-10-15
 ### Added
 - GUI: AMT power, boot and IDE-R controls (AMT and AMT SOL protocols), using the WS-Management client (`amt.rs`, now a full copy of the CLI's in `gui/src-tauri/src`; TLS and certificate pinning as for the KVM). A new toolbar row: Status (power state, whether SOL and IDE-R are on), On, Reset, Cycle, Off (the last three need a second click within 4 s, "Sure?"), a Next start choice (Normal, Hard drive, Network (PXE), CD/DVD, Virtual media (ISO), BIOS setup, Diagnostics) with an SOL checkbox and Set, and Enable IDE-R. The media row gets **Mount and boot**: it switches IDE-R on if it is off, opens the IDE-R session, sets the boot to the virtual CD and resets the machine (or powers it on if it is off). Results appear in a line at the end of the row. `amt_control.rs` has the commands, `amt_media.rs` now has `start_session` for both Mount and Mount and boot. Not yet tried.

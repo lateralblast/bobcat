@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.9.3
+// Version: 1.9.4
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -642,6 +642,17 @@ const DEPS: &[Dep] = &[
         purpose: "build.sh --package rpm",
         optional: true,
         hint: "sudo apt install rpm (Fedora/openSUSE: rpm-build), or --check --install",
+    },
+    Dep {
+        name: "gh",
+        probe: Probe::Bin("gh"),
+        apt: "gh",
+        dnf: "gh",
+        zypper: "github-cli",
+        brew: "gh",
+        purpose: "build.sh --release (GitHub CLI; also needs gh auth login)",
+        optional: true,
+        hint: "install the GitHub CLI from https://cli.github.com (apt/dnf: gh, zypper: github-cli, brew: gh), or --check --install",
     },
     Dep {
         name: "Java runtime",
