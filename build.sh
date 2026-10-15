@@ -4,7 +4,8 @@
 #   ./build.sh --target linux [--package deb|rpm|appimage|all]   (comma list allowed, e.g. deb,rpm; default: the distribution's own
 #                                                                 package, deb on Debian/Ubuntu, rpm on RHEL/Fedora/Alma/Rocky/SUSE, else appimage;
 #                                                                 --target deb / --target rpm = linux with that package only)
-#   ./build.sh --target windows      (run on Windows, e.g. in Git Bash)
+#   ./build.sh --target windows      (on Windows, e.g. in Git Bash; on Linux it builds in a Windows 11 VM, see windows/vm.py:
+#                                     needs docker and /dev/kvm, run `python3 windows/vm.py up` once first)
 #   ./build.sh [--target <t>] --release [--draft] [--yes] [--dry-run]
 #   ./build.sh --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]
 # A target can only be built on its own platform (the GUI links the system web view).
@@ -69,6 +70,24 @@ native_package() {
   esac
 }
 
+# Windows from a Linux host: the installer and bobcat-cli are built in the Windows 11 VM (windows/vm.py)
+windows_vm() {
+  command -v python3 >/dev/null || { echo "python3 not found (windows/vm.py needs it)" >&2; exit 1; }
+  python3 -I "$root/windows/vm.py" build
+  mkdir -p "$dist"
+  found=0
+  for f in "$root"/windows/out/bundle/nsis/*-setup.exe; do
+    [ -f "$f" ] || continue
+    cp "$f" "$dist/"; echo "  $dist/$(basename "$f")"; found=1
+  done
+  [ "$found" = 1 ] || { echo "no installer found under windows/out/bundle/nsis" >&2; exit 1; }
+  if [ "$cli" = 1 ] && [ -f "$root/windows/out/bundle/cli/bobcat-cli.exe" ]; then
+    cp "$root/windows/out/bundle/cli/bobcat-cli.exe" "$dist/bobcat-cli-$version-windows.exe"
+    echo "  $dist/bobcat-cli-$version-windows.exe"
+  fi
+  echo "done: $dist"
+}
+
 build_target() {
   host=$(uname -s)
   case "$target" in deb|rpm) package="$target"; target=linux ;; esac
@@ -95,6 +114,9 @@ build_target() {
     case ",$bundles," in
       *,rpm,*) command -v rpmbuild >/dev/null || { echo "rpmbuild not found: install it (Debian/Ubuntu: apt install rpm; Fedora: dnf install rpm-build)" >&2; exit 1; } ;;
     esac
+  fi
+  if [ "$target" = windows ] || [ "$target" = win ]; then
+    if [ "$host" = Linux ]; then windows_vm; return; fi
   fi
   case "$host" in
     $want*) ;;

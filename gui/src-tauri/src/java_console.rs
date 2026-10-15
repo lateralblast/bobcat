@@ -463,6 +463,7 @@ fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> R
 /// console is inverted), enlarged 3x with bicubic smoothing. No black-and-white step: measured on a
 /// capture of a Linux text console, thresholding cost far more accuracy than it gained (about 78%
 /// character match with the grays kept, 60% or less with a threshold).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn prepare_for_ocr(png: &[u8]) -> Result<Vec<u8>, String> {
     use image::{imageops, ImageFormat};
     let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| e.to_string())?;

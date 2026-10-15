@@ -79,6 +79,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried and working, including the Local Network permission)
 - [~] build.sh: install-test the deb and rpm (1.8.6: the deb installs on Ubuntu 24.04 and the rpm on Fedora 42 in containers with no missing libraries; the GUI was not started there; still to do: build the rpm on an RPM distribution)
 - [x] `build.sh --target deb` / `--package deb|rpm|appimage|all` (1.4.7; deb builds on Linux, install not tried)
+- [~] build.sh: Windows installer built in a Windows 11 VM on Linux (1.9.5, `windows/vm.py`, from cheetoh; written, VM not started yet; the Rust code has not been compiled for Windows, so expect fixes; the installer has not been run on Windows)
 - [ ] build.sh: test `--target windows` (`--target linux` builds the distribution's package on Ubuntu, 1.5.2), `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console
 - [x] `build.sh --delete-release [<version>]` (1.4.9; untried against GitHub, `--dry-run` first)
 - [x] `build.sh --release`: tag, push and GitHub release with the installers (1.4.6; only `--dry-run` tried)

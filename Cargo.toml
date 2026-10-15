@@ -1,6 +1,6 @@
 [package]
 name = "bobcat-cli"
-version = "1.9.4"
+version = "1.9.5"
 license = "CC-BY-NC-SA-4.0"
 edition = "2024"
 

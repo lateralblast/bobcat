@@ -2,6 +2,10 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [1.9.5] - 2026-10-15
+### Added
+- Windows installer from a Linux machine: `./build.sh --target windows` on Linux now builds the NSIS installer and `bobcat-cli.exe` in a Windows 11 virtual machine (`windows/`, adapted from the cheetoh project). `python3 windows/vm.py up` starts the `dockurr/windows` container (QEMU/KVM; needs docker and `/dev/kvm`; the first start downloads Windows and installs the Visual Studio Build Tools, Rust, Strawberry Perl for the vendored OpenSSL, and tauri-cli), `vm.py build` has a watcher in the VM build from a read-only share of the repo and copies the results to `windows/out/bundle`, `vm.py status|down`. `build.sh` copies them to `dist/` as `bobcat_<version>_x64-setup.exe` and `bobcat-cli-<version>-windows.exe`. On Windows itself (Git Bash) `--target windows` still builds natively. Not run yet: the VM has not been started, and the Rust code has not been compiled for Windows, so the first build may show compile errors.
+
 ## [1.9.4] - 2026-10-15
 ### Added
 - `bobcat-cli --check` reports `gh` (the GitHub CLI, needed only for `build.sh --release` and `--delete-release`; optional, never fails the check). `--check --install` installs it where the package manager has one (apt/dnf `gh`, zypper `github-cli`, Homebrew `gh`). It still needs `gh auth login` afterwards.

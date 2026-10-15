@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 1.9.4
+Version: 1.9.5
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -194,7 +194,7 @@ For an Intel AMT (vPro) machine the usual tool is MeshCommander (version 0.9.5-a
 ./build.sh --target linux      # the distribution's own package: .deb on Debian/Ubuntu, .rpm on RHEL/Fedora/Alma/Rocky/SUSE, else .AppImage (build on Linux)
 ./build.sh --target linux --package rpm   # or deb / appimage / all, or a list like deb,rpm (rpm needs rpmbuild)
 ./build.sh --target deb        # shortcut for --target linux --package deb (also --target rpm)
-./build.sh --target windows    # NSIS setup.exe (build on Windows, e.g. Git Bash)
+./build.sh --target windows    # NSIS setup.exe + bobcat-cli.exe: on Windows (Git Bash) natively; on Linux in a Windows 11 VM (python3 windows/vm.py up first; needs docker and /dev/kvm)
 ```
 
 `./build.sh --release` (with or without a `--target`) tags the commit `v<version>`, pushes the tag and creates the GitHub

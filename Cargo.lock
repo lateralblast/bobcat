@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "bobcat-cli"
-version = "1.9.4"
+version = "1.9.5"
 dependencies = [
  "clap",
  "flate2 1.1.10",
