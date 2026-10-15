@@ -197,6 +197,8 @@ For an Intel AMT (vPro) machine the usual tool is MeshCommander (version 0.9.5-a
 ./build.sh --target windows    # NSIS setup.exe + bobcat-cli.exe: on Windows (Git Bash) natively; on Linux in a Windows 11 VM (python3 windows/vm.py up first; needs docker and /dev/kvm)
 ```
 
+The Windows build has no console modes (`--console`) in `bobcat-cli` for now, see Known issues.
+
 `./build.sh --release` (with or without a `--target`) tags the commit `v<version>`, pushes the tag and creates the GitHub
 release with the installers in `dist/` for that version (needs `gh`, logged in; notes come from `CHANGELOG.md`). Run it on each
 platform's machine to add that platform's files to the same release. It never commits: commit and push first. `--draft`
@@ -225,6 +227,10 @@ This project used to be called dracon. The old `~/.config/dracon-gui` and `~/.ca
 copied to the new locations); the old `DRACON_*` environment variables are no longer used, only `BOBCAT_*`.
 
 ## Known issues
+
+### Windows: no console modes yet
+
+The Windows build does not support the console modes at the moment. `bobcat-cli --console vnc|sol|ssh` needs a Unix terminal (raw mode, `poll`) and stops with an error on Windows; the other options (`--info`, `--enable`/`--disable`, `--disconnect`, `--check`, the AMT power, boot and IDE-R options) are not affected by that. For consoles on Windows use the GUI (`bobcat`). The Windows installer is built in a Windows 11 virtual machine (see "Building installers") and has not been run on Windows yet, so the GUI there is untested: the HTML5 console opens in a separate window, and the Java console is not docked.
 
 ### Java console: keyboard library warning (macOS)
 

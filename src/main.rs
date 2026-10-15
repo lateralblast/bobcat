@@ -925,9 +925,14 @@ extern "C" fn on_signal(_: libc::c_int) {
 }
 
 fn install_signal_handlers() {
+    // Windows has no SIGHUP (Ctrl+C is SIGINT there)
+    #[cfg(unix)]
+    let signals = [libc::SIGTERM, libc::SIGHUP, libc::SIGINT];
+    #[cfg(not(unix))]
+    let signals = [libc::SIGTERM, libc::SIGINT];
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe
     unsafe {
-        for sig in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+        for sig in signals {
             libc::signal(sig, on_signal as *const () as libc::sighandler_t);
         }
     }
@@ -938,8 +943,10 @@ fn signaled() -> bool {
 }
 
 /// Puts the terminal into raw mode and restores it when dropped.
+#[cfg(unix)]
 struct RawMode(libc::termios);
 
+#[cfg(unix)]
 impl RawMode {
     fn enter() -> Result<RawMode, String> {
         // SAFETY: plain libc termios calls on stdin with a zeroed, then filled, struct
@@ -958,6 +965,7 @@ impl RawMode {
     }
 }
 
+#[cfg(unix)]
 impl Drop for RawMode {
     fn drop(&mut self) {
         // SAFETY: restores the attributes saved in enter()
@@ -965,6 +973,7 @@ impl Drop for RawMode {
     }
 }
 
+#[cfg(unix)]
 fn term_size() -> (u32, u32) {
     // SAFETY: TIOCGWINSZ fills a winsize struct
     unsafe {
@@ -976,6 +985,40 @@ fn term_size() -> (u32, u32) {
         }
     }
 }
+
+/// Is there input waiting on stdin (waits up to `timeout_ms`)? Unix only, like the console modes.
+#[cfg(unix)]
+fn stdin_ready(timeout_ms: i32) -> bool {
+    let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+    // SAFETY: one valid pollfd for the duration of the call
+    let ready = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
+    ready > 0 && fd.revents & (libc::POLLIN | libc::POLLHUP) != 0
+}
+
+// The terminal consoles (--console vnc|sol|ssh) need a Unix terminal (termios, poll). On Windows
+// they are refused up front (see run), and these stand-ins only keep the shared code compiling.
+#[cfg(not(unix))]
+struct RawMode;
+
+#[cfg(not(unix))]
+impl RawMode {
+    fn enter() -> Result<RawMode, String> {
+        Err(CONSOLE_NOT_ON_WINDOWS.into())
+    }
+}
+
+#[cfg(not(unix))]
+fn term_size() -> (u32, u32) {
+    (80, 24)
+}
+
+#[cfg(not(unix))]
+fn stdin_ready(_timeout_ms: i32) -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+const CONSOLE_NOT_ON_WINDOWS: &str = "--console (vnc, sol, ssh) needs a Unix terminal and is not available on Windows; use the GUI (bobcat) for consoles";
 
 /// End the console cleanly: send the iDRAC's quit key (Ctrl+\\) so it releases the
 /// serial device, wait briefly, then close the channel and say goodbye.
@@ -1027,10 +1070,7 @@ fn console_amt_sol(args: &Args, pass: &str) -> Result<(), String> {
     let mut buf = vec![0u8; 4096];
     let (mut line_start, mut tilde) = (true, false);
     'run: while !signaled() && !stop.load(std::sync::atomic::Ordering::SeqCst) {
-        let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-        // SAFETY: one valid pollfd for the duration of the call
-        let ready = unsafe { libc::poll(&mut fd, 1, 100) };
-        if ready > 0 && fd.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+        if stdin_ready(100) {
             let n = std::io::stdin().read(&mut buf).unwrap_or(0);
             if n == 0 {
                 break;
@@ -1127,10 +1167,7 @@ fn console_ssh(ip: &str, user: &str, pass: &str, trust_new: bool) -> Result<(), 
             break End::Remote;
         }
         // terminal -> server (wait up to 10ms for a key)
-        let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-        // SAFETY: one valid pollfd for the duration of the call
-        let ready = unsafe { libc::poll(&mut fd, 1, 10) };
-        if ready > 0 && fd.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+        if stdin_ready(10) {
             let n = std::io::stdin().read(&mut buf).unwrap_or(0);
             if n == 0 {
                 break End::Signal; // stdin closed: the terminal is gone
@@ -1177,6 +1214,10 @@ fn console_ssh(ip: &str, user: &str, pass: &str, trust_new: bool) -> Result<(), 
 fn go(args: Args) -> Result<(), String> {
     if args.check {
         return if check(args.install) { Ok(()) } else { Err("required packages are missing".into()) };
+    }
+    #[cfg(not(unix))]
+    if args.console.is_some() {
+        return Err(CONSOLE_NOT_ON_WINDOWS.into());
     }
     // The iDRAC login is only needed for racadm over SSH, SOL and the SSH console;
     // --console vnc uses the VNC password instead.

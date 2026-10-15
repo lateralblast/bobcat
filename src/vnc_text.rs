@@ -482,9 +482,7 @@ pub fn run(ip: &str, port: u16, tls: bool, vncpass: &str, trust_new: bool, relea
         }
         // --- keyboard -> server
         if interactive {
-            let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-            let ready = unsafe { libc::poll(&mut fd, 1, if got { 0 } else { 5 }) };
-            if ready > 0 && fd.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+            if crate::stdin_ready(if got { 0 } else { 5 }) {
                 let n = std::io::stdin().read(&mut buf).unwrap_or(0);
                 if n == 0 {
                     break Ok(());
