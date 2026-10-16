@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.9.6
+// Version: 2.0.0
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -311,6 +311,11 @@ struct Args {
     /// boot, the default), graceful or now
     #[arg(long, value_enum, default_value = "reboot")]
     ider_start: IderStartArg,
+
+    /// With --ider-cd / --ider-floppy: also make the NEXT start boot from that image (the CD if both are
+    /// given), the same as --boot ider-cd / ider-floppy. Add --power on / reset / cycle to start it now
+    #[arg(long, conflicts_with = "boot")]
+    ider_boot: bool,
 
     /// With --boot, redirect the BIOS / boot text to Serial over LAN (then use --console sol)
     #[arg(long, requires = "boot")]
@@ -1500,7 +1505,15 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
         }
         ider_session = Some((stop, stats, handle));
     }
-    if let Some(b) = args.boot {
+    let boot = if args.ider_boot {
+        if args.ider_cd.is_none() && args.ider_floppy.is_none() {
+            return Err("--ider-boot needs --ider-cd or --ider-floppy".into());
+        }
+        Some(if args.ider_cd.is_some() { Boot::IderCd } else { Boot::IderFloppy })
+    } else {
+        args.boot
+    };
+    if let Some(b) = boot {
         match b.source() {
             None => device.boot_status()?,
             Some(src) => {

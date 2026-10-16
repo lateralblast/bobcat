@@ -1,6 +1,6 @@
 [package]
 name = "bobcat"
-version = "1.9.6"
+version = "2.0.0"
 edition = "2021"
 license = "CC-BY-NC-SA-4.0"
 
@@ -25,6 +25,9 @@ ctrlc = { version = "3.5.2", features = ["termination"] }
 flate2 = "1.1.10"
 keyring = "4"
 rfd = "0.17"
+ironrdp = { version = "0.17", features = ["connector", "session", "graphics", "input", "pdu", "core", "cliprdr", "displaycontrol", "dvc", "svc"] }
+ironrdp-blocking = "0.10.0"
+x509-cert = "0.3.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2", features = ["v2_6"] }

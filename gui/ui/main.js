@@ -43,7 +43,7 @@ function redraw(box) {
 }
 const $ = (id) => document.getElementById(id);
 // protocols drawn on the canvas (the remote framebuffer): they share zoom, paste, copy and the on-screen keyboard
-const isCanvas = (p) => p === 'vnc' || p === 'amt' || p === 'ard';
+const isCanvas = (p) => p === 'vnc' || p === 'amt' || p === 'ard' || p === 'rdp';
 
 invoke('default_tls').then((t) => { $('tls').checked = t; });
 invoke('default_user').then((u) => { $('user').value = u; });
@@ -92,6 +92,10 @@ $('go').onclick = () => {
     invoke('connect_amt', { ip: $('ip').value, user: $('user').value || 'admin', pass: $('pass').value, remember });
   } else if (proto === 'ard') {
     invoke('connect_ard', { ip: $('ip').value, port: Number($('port').value), user: $('user').value, pass: $('pass').value, remember });
+  } else if (proto === 'rdp') {
+    // with "Fit window" the Windows desktop is made as big as the canvas area (and follows the window); otherwise the default size
+    const want = $('zoom').value === 'fit' ? rdpArea() : {};
+    invoke('connect_rdp', { ip: $('ip').value, port: Number($('port').value), user: $('user').value, pass: $('pass').value, remember, width: want.w, height: want.h });
   } else if (proto === 'vnc') {
     invoke('connect', { ip: $('ip').value, port: Number($('port').value), tls: $('tls').checked, pass: $('pass').value, remember });
   } else {
@@ -129,6 +133,18 @@ function zoomFactor() {
   const aw = wrap.clientWidth - 2 * PAD, ah = wrap.clientHeight - 2 * PAD;
   return Math.max(0.1, Math.min(4, aw / fb.width, ah / fb.height));
 }
+// RDP: the size the Windows desktop can have to fill the canvas area (even width, within what the protocol allows)
+function rdpArea() {
+  const wrap = $('wrap');
+  const clamp = (v) => Math.max(200, Math.min(8192, v));
+  return { w: clamp(wrap.clientWidth - 2 * PAD) & ~1, h: clamp(wrap.clientHeight - 2 * PAD) };
+}
+let rdpResizeTimer = null;
+function rdpFollowWindow() {
+  if ($('proto').value !== 'rdp' || $('zoom').value !== 'fit') return;
+  clearTimeout(rdpResizeTimer);
+  rdpResizeTimer = setTimeout(() => { const a = rdpArea(); invoke('rdp_resize', { w: a.w, h: a.h }); }, 400);
+}
 function applyZoom() {
   const z = zoomFactor();
   const dpr = window.devicePixelRatio || 1;
@@ -153,9 +169,11 @@ $('zoom').onchange = () => {
   if (!isCanvas($('proto').value)) { applyTermFont(); return; }
   applyZoom();
   if ($('zoom').value !== 'fit') fitWindow();
+  rdpFollowWindow();
 };
 window.addEventListener('resize', () => {
   reportLayout();
+  rdpFollowWindow();
   if (!isCanvas($('proto').value)) { if (fit) fit.fit(); return; }
   if ($('zoom').value === 'fit') applyZoom();
 });
@@ -537,11 +555,11 @@ let prevProto = null;
 // show only the controls that apply to the chosen protocol
 function setProto() {
   const proto = $('proto').value;
-  const kind = proto === 'vnc' || proto === 'amt' || proto === 'ard' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
+  const kind = proto === 'vnc' || proto === 'amt' || proto === 'ard' || proto === 'rdp' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
   const hide = (sel, yes) => document.querySelectorAll(sel).forEach((el) => el.classList.toggle('hidden', yes));
   hide('.vnc-only', kind !== 'vnc');
   hide('.amt-only', proto !== 'amt' && proto !== 'amtsol'); // virtual media (IDE-R) of an AMT machine
-  hide('.vnc-net', proto !== 'vnc' && proto !== 'ard'); // port (and TLS) of a VNC server: the iDRAC's, or a Mac's
+  hide('.vnc-net', proto !== 'vnc' && proto !== 'ard' && proto !== 'rdp'); // port (and TLS) of a VNC server: the iDRAC's, a Mac's, or Windows' RDP port
   hide('.vnc-tls', proto !== 'vnc');           // TLS is only for the iDRAC's VNC server
   hide('.login-only', proto === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
@@ -552,11 +570,12 @@ function setProto() {
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');
   $('javanote').classList.toggle('hidden', kind !== 'java');
-  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' || proto === 'amtsol' ? 'AMT password' : proto === 'ard' ? 'Mac password' : 'iDRAC password';
-  $('user').placeholder = proto === 'ard' ? 'Mac user name' : 'iDRAC / AMT user';
-  // a Mac listens on 5900, the iDRAC's VNC server on 5901: the port follows ARD in and out, but only while it still holds the other default
-  if (proto === 'ard' && prevProto !== 'ard' && $('port').value === '5901') $('port').value = '5900';
-  if (proto !== 'ard' && prevProto === 'ard' && $('port').value === '5900') $('port').value = '5901';
+  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' || proto === 'amtsol' ? 'AMT password' : proto === 'ard' ? 'Mac password' : proto === 'rdp' ? 'Windows password' : 'iDRAC password';
+  $('user').placeholder = proto === 'ard' ? 'Mac user name' : proto === 'rdp' ? 'Windows user (DOMAIN\\user for a domain)' : 'iDRAC / AMT user';
+  // each protocol has its own default port (iDRAC VNC 5901, Mac 5900, Windows RDP 3389): the port follows the protocol while it still holds the previous default
+  const ports = { ard: '5900', rdp: '3389' };
+  const dflt = (p) => ports[p] || '5901';
+  if (prevProto && prevProto !== proto && $('port').value === dflt(prevProto)) $('port').value = dflt(proto);
   prevProto = proto;
   // the Certificate button shows the TLS certificate (VNC, HTML5) or SSH host key; SOL has neither
   $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java' || proto === 'ard');

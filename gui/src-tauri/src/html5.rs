@@ -21,12 +21,15 @@ use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl, W
 
 pub(crate) const LABEL: &str = "html5console";
 
+use crate::ilo::{self, Vendor};
+
 /// A logged-in iDRAC web session we must log out of.
 #[derive(Clone)]
 pub(crate) struct WebSession {
     pub(crate) ip: String,
     pub(crate) cookie: String, // "-http-session-=..."
     pub(crate) st2: String,
+    pub(crate) vendor: Vendor,
 }
 
 pub(crate) static SESSIONS: Mutex<Vec<WebSession>> = Mutex::new(Vec::new());
@@ -70,7 +73,9 @@ fn decode_chunked(mut b: &[u8]) -> Vec<u8> {
 /// One HTTPS request on a fresh TLS connection. The certificate is checked against the
 /// pin (saved on first use) before anything is written, so credentials never reach an
 /// impostor.
-pub(crate) fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: Option<&str>) -> Result<Resp, String> {
+/// A TLS connection to the BMC's web server on port 443. The certificate is checked against the pin
+/// (saved on first use) before the caller writes anything, and remembered for the web view.
+pub(crate) fn tls_connect(ip: &str) -> Result<openssl::ssl::SslStream<TcpStream>, String> {
     use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
     let addr = (ip, 443).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad address")?;
     let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| format!("connect failed: {e}"))?;
@@ -82,13 +87,18 @@ pub(crate) fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String
     let mut cfg = b.build().configure().map_err(|e| e.to_string())?;
     cfg.set_verify_hostname(false);
     cfg.set_use_server_name_indication(false);
-    let mut tls = cfg.connect(ip, tcp).map_err(|e| format!("tls handshake: {e}"))?;
+    let tls = cfg.connect(ip, tcp).map_err(|e| format!("tls handshake: {e}"))?;
     crate::check_pin(ip, &tls)?;
     if let Some(pem) = tls.ssl().peer_certificate().and_then(|c| c.to_pem().ok()) {
         let mut peers = PEERS.lock().unwrap_or_else(|e| e.into_inner());
         peers.retain(|(i, _)| i != ip);
         peers.push((ip.to_string(), pem));
     }
+    Ok(tls)
+}
+
+pub(crate) fn request(ip: &str, method: &str, path: &str, extra: &[(&str, String)], body: Option<&str>) -> Result<Resp, String> {
+    let mut tls = tls_connect(ip)?;
 
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\nAccept-Encoding: gzip\r\nUser-Agent: bobcat\r\n"
@@ -172,7 +182,10 @@ pub(crate) struct Console {
     pub(crate) session: WebSession,
     pub(crate) url: String,
     /// the iDRAC's language strings: the viewer page reads them from window.opener.top.localeObj
-    locale: String,
+    pub(crate) locale: String,
+    pub(crate) vendor: Vendor,
+    /// the host the web view uses (the BMC's address, or 127.0.0.1 when a local relay is in between): the cookie's domain
+    pub(crate) web_host: String,
     /// the first session token (ST1), which the Java viewer's launch file is requested with
     pub(crate) st1: String,
 }
@@ -209,7 +222,7 @@ pub(crate) fn login_as(ip: &str, user: &str, pass: &str, plugin: &str) -> Result
         .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
         .find_map(|(_, v)| v.split(';').next().filter(|c| c.starts_with("-http-session-=")).map(|c| c.to_string()))
         .ok_or("login gave no session cookie")?;
-    let session = WebSession { ip: ip.to_string(), cookie, st2: st2.clone() };
+    let session = WebSession { ip: ip.to_string(), cookie, st2: st2.clone(), vendor: Vendor::Dell };
     // from here on the session exists on the iDRAC: always log out if we give up
     SESSIONS.lock().unwrap().push(session.clone());
     let get = |path: &str| -> Result<serde_json::Value, String> {
@@ -261,10 +274,15 @@ pub(crate) fn login_as(ip: &str, user: &str, pass: &str, plugin: &str) -> Result
     let url = format!(
         "https://{ip}/virtualconsolehtml5.html?ipAddr={ip}&kvmPort={port}&vmPriv={vm_priv}&lang=en&aimSession={aim}&ST2={st2}&TokenName=ST1&TokenKey={st1}"
     );
-    Ok(Console { session, url, locale: locale_obj.to_string(), st1 })
+    Ok(Console { session, url, locale: locale_obj.to_string(), st1, vendor: Vendor::Dell, web_host: ip.to_string() })
 }
 
 fn logout(s: &WebSession) {
+    if s.vendor == Vendor::Hpe {
+        ilo::logout(s);
+        SESSIONS.lock().unwrap().retain(|x| x.cookie != s.cookie);
+        return;
+    }
     let _ = request(&s.ip, "GET", "/data/logout", &[("Cookie", s.cookie.clone()), ("ST2", s.st2.clone())], None);
     SESSIONS.lock().unwrap().retain(|x| x.cookie != s.cookie);
 }
@@ -320,6 +338,7 @@ fn pin_webview_tls(webview: &tauri::Webview) {
     use objc2::runtime::{AnyClass, AnyObject};
     use objc2::{msg_send, sel};
     static ADDED: std::sync::Once = std::sync::Once::new();
+    static FAILED: std::sync::Once = std::sync::Once::new();
     let _ = webview.with_webview(|pw| unsafe {
         let wk = pw.inner() as *mut AnyObject;
         // the viewer opens its certificate window automatically when it loads
@@ -344,6 +363,22 @@ fn pin_webview_tls(webview: &tauri::Webview) {
             );
             if !ok.as_bool() {
                 eprintln!("[bobcat] could not add the certificate check to the web view");
+            }
+        });
+        // log why a navigation fails (wry does not): the error's domain, code and description
+        FAILED.call_once(|| {
+            // also say when a navigation starts or is redirected (same signature, the third argument is the navigation)
+            for sel in [sel!(webView:didStartProvisionalNavigation:), sel!(webView:didReceiveServerRedirectForProvisionalNavigation:)] {
+                let imp: unsafe extern "C-unwind" fn() = std::mem::transmute(mac_tls::started as mac_tls::Started);
+                if !class_addMethod(class, sel, imp, c"v@:@@".as_ptr()).as_bool() && debug_on() {
+                    eprintln!("[bobcat] the web view already handles {sel:?}");
+                }
+            }
+            for sel in [sel!(webView:didFailProvisionalNavigation:withError:), sel!(webView:didFailNavigation:withError:)] {
+                let imp: unsafe extern "C-unwind" fn() = std::mem::transmute(mac_tls::failed as mac_tls::Failed);
+                if !class_addMethod(class, sel, imp, c"v@:@@@".as_ptr()).as_bool() && debug_on() {
+                    eprintln!("[bobcat] the web view already handles {sel:?}");
+                }
             }
         });
         // WebKit caches which delegate methods exist when the delegate is set, so set it again
@@ -376,6 +411,38 @@ mod mac_tls {
         if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
     }
 
+    pub type Started = extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject);
+
+    pub extern "C" fn started(_this: *mut AnyObject, cmd: Sel, webview: *mut AnyObject, _navigation: *mut AnyObject) {
+        unsafe {
+            let url: *mut AnyObject = msg_send![webview, URL];
+            let url = if url.is_null() { String::new() } else { text(msg_send![url, absoluteString]) };
+            // the query may hold a session key
+            let url = url.split('?').next().unwrap_or("").to_string();
+            eprintln!("[bobcat] {}: {url}", if cmd.name().to_bytes().contains(&b'R') { "navigation redirected" } else { "navigation started" });
+        }
+    }
+
+    pub type Failed = extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject, *mut AnyObject);
+
+    /// webView:didFailProvisionalNavigation:withError: (and didFailNavigation): say what went wrong.
+    pub extern "C" fn failed(_this: *mut AnyObject, _cmd: Sel, _webview: *mut AnyObject, _navigation: *mut AnyObject, error: *mut AnyObject) {
+        unsafe {
+            let domain = text(msg_send![error, domain]);
+            let code: isize = msg_send![error, code];
+            let desc = text(msg_send![error, localizedDescription]);
+            let info: *mut AnyObject = msg_send![error, userInfo];
+            let url = if info.is_null() {
+                String::new()
+            } else {
+                let key: *mut AnyObject = msg_send![objc2::class!(NSString), stringWithUTF8String: c"NSErrorFailingURLStringKey".as_ptr()];
+                let v: *mut AnyObject = msg_send![info, objectForKey: key];
+                text(v)
+            };
+            eprintln!("[bobcat] navigation failed: {domain} {code}: {desc} {}", url.split('?').next().unwrap_or("")); // (no query: it may hold a session key)
+        }
+    }
+
     // NSURLSessionAuthChallengeDisposition: 0 use credential, 1 default handling, 2 cancel
     pub extern "C" fn challenge(
         _this: *mut AnyObject,
@@ -402,7 +469,7 @@ mod mac_tls {
                 let h = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), &c.to_der()).ok()?;
                 Some(h.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":"))
             });
-            if fp.is_some() && crate::load_pins().get(&host) == fp.as_ref() {
+            if fp.is_some() && (crate::load_pins().get(&host) == fp.as_ref() || crate::ilo_relay::is_ours(fp.as_ref())) {
                 let class = AnyClass::get(c"NSURLCredential").unwrap();
                 let cred: *mut AnyObject = msg_send![class, credentialForTrust: trust];
                 completion.call((0, cred));
@@ -421,13 +488,17 @@ fn pin_webview_tls(_webview: &tauri::Webview) {}
 /// its original opener window, so ping the session every couple of minutes while it exists.
 pub(crate) fn keep_alive(s: WebSession) {
     std::thread::spawn(move || loop {
-        for _ in 0..120 {
+        for _ in 0..(if s.vendor == Vendor::Hpe { 60 } else { 120 }) {
             std::thread::sleep(Duration::from_secs(1));
             if !SESSIONS.lock().unwrap().iter().any(|x| x.cookie == s.cookie) {
                 return;
             }
         }
-        let _ = request(&s.ip, "GET", "/session?getSsnVar=aimSession", &[("Cookie", s.cookie.clone()), ("ST2", s.st2.clone())], None);
+        if s.vendor == Vendor::Hpe {
+            ilo::ping(&s);
+        } else {
+            let _ = request(&s.ip, "GET", "/session?getSsnVar=aimSession", &[("Cookie", s.cookie.clone()), ("ST2", s.st2.clone())], None);
+        }
     });
 }
 
@@ -479,6 +550,45 @@ fn opener_script(locale: &str) -> String {
     format!(
         "try {{ Object.defineProperty(window, 'opener', {{ configurable: true, value: {{ top: {{ localeObj: {locale}, htmlViewerWindow: null }} }} }}); }} catch (e) {{}}\n{VM_FILE_SCRIPT}"
     )
+}
+
+/// Script run in the console page before its own: Dell's page wants a fake opener window; the iLO's
+/// reads its session key from a `sessionKey` cookie with JavaScript (`iLO.getSessionKey()`), so
+/// the page sets that cookie itself too (the native cookie set from here was not found by it).
+fn page_script(console: &Console) -> String {
+    match console.vendor {
+        Vendor::Dell => opener_script(&console.locale),
+        Vendor::Hpe => {
+            let (name, value) = console.session.cookie.split_once('=').unwrap_or(("sessionKey", ""));
+            let ok = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+            if ok(name) && ok(value) {
+                // With BOBCAT_DEBUG the page also reports to the relay's log whether it can see the cookie, key
+                // events, clicks and focus changes (type harmless keys only, they are written to the log).
+                let diag = if debug_on() {
+                    "document.addEventListener('DOMContentLoaded', function () { try { fetch('/__bobcat?cookie=' + (document.cookie.indexOf('sessionKey=') >= 0) + '&len=' + document.cookie.length); } catch (e) {} });\n\
+                     (function () { var send = function (q) { try { fetch('/__bobcat?' + q); } catch (e) {} };\
+                      window.addEventListener('keydown', function (e) { send('keydown=' + encodeURIComponent(e.code || e.key) + '&hasFocus=' + document.hasFocus()); }, true);\
+                      window.addEventListener('keyup', function (e) { send('keyup=' + encodeURIComponent(e.code || e.key)); }, true);\
+                      window.addEventListener('mousedown', function () { send('mousedown&hasFocus=' + document.hasFocus() + '&active=' + (document.activeElement && document.activeElement.tagName)); }, true);\
+                      window.addEventListener('focus', function () { send('window-focus'); }, true);\
+                      window.addEventListener('blur', function () { send('window-blur'); }, true); })();"
+                } else {
+                    ""
+                };
+                // the page's title bar shows window.location.hostname, which is the local relay's 127.0.0.1: show the iLO instead
+                let host = &console.session.ip;
+                let host_ok = host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':');
+                let title = if host_ok {
+                    format!("var t = 0, fix = setInterval(function () {{ var e = document.querySelector('.middleControl'); if (e && e.textContent === '127.0.0.1') {{ e.textContent = '{host}'; }} if (++t > 60) clearInterval(fix); }}, 500);\n")
+                } else {
+                    String::new()
+                };
+                format!("try {{ document.cookie = '{name}={value}; path=/; secure'; }} catch (e) {{}}\n{title}{diag}")
+            } else {
+                String::new()
+            }
+        }
+    }
 }
 
 /// The viewer's Virtual Media dialog enables its "Map Device" button from a `change` event on its
@@ -557,7 +667,7 @@ fn new_window_handler(app: AppHandle, ip: String) -> impl Fn(Url, NewWindowFeatu
 
 fn page_log(event: &str, payload: &tauri::webview::PageLoadPayload<'_>) {
     if debug_on() {
-        eprintln!("[bobcat] {event} {:?}: {}", payload.event(), payload.url());
+        eprintln!("[bobcat] {event} {:?}: {}", payload.event(), payload.url().as_str().split('?').next().unwrap_or(""));
     }
 }
 
@@ -723,7 +833,7 @@ fn wait_for_main_thread(webview: &tauri::Webview) {
 fn set_session_cookie(webview: &tauri::Webview, ip: &str, session: &WebSession) -> Result<(), String> {
     let cookie = session.cookie.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).ok_or("bad cookie")?;
     webview
-        .set_cookie(Cookie::build(cookie).domain(ip.to_string()).path("/").secure(true).http_only(true).build())
+        .set_cookie(Cookie::build(cookie).domain(ip.to_string()).path("/").secure(true).http_only(session.vendor == Vendor::Dell).build())
         .map_err(|e| e.to_string())
 }
 
@@ -735,7 +845,7 @@ fn open_embedded(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Str
     let (w, h) = (inner.width as f64 / scale, inner.height as f64 / scale);
     let top = TOP_HEIGHT.load(Ordering::SeqCst).max(0) as f64;
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
-        .initialization_script(opener_script(&console.locale))
+        .initialization_script(page_script(console))
         .on_new_window(new_window_handler(app.clone(), ip.to_string()))
         .on_page_load(|_w, payload| page_log("page", &payload));
     let webview = main
@@ -748,7 +858,7 @@ fn open_embedded(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Str
     #[cfg(target_os = "macos")]
     let _ = webview.set_auto_resize(false);
     apply_embedded_layout(app);
-    set_session_cookie(&webview, ip, &console.session)?;
+    set_session_cookie(&webview, &console.web_host, &console.session)?;
     webview.navigate(console.url.parse().map_err(|e| format!("{e}"))?).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -756,9 +866,9 @@ fn open_embedded(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Str
 /// The console in a window of its own (the fallback when embedding is not possible).
 fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), String> {
     let win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
-        .title(format!("iDRAC console - {ip}"))
+        .title(format!("{} console - {ip}", console.vendor.name()))
         .inner_size(1100.0, 840.0)
-        .initialization_script(opener_script(&console.locale))
+        .initialization_script(page_script(console))
         .on_new_window(new_window_handler(app.clone(), ip.to_string()))
         .on_page_load(|_w, payload| page_log("page", &payload))
         .build()
@@ -773,7 +883,7 @@ fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Strin
             disconnect_in_background(&app_for_close);
         }
     });
-    let cookie_result = set_session_cookie(win.as_ref(), ip, &console.session);
+    let cookie_result = set_session_cookie(win.as_ref(), &console.web_host, &console.session);
     if debug_on() {
         eprintln!("[bobcat] set cookie: {cookie_result:?}");
     }
@@ -788,8 +898,14 @@ fn open_window(app: &AppHandle, ip: &str, console: &Console) -> Result<(), Strin
 
 fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Result<(), String> {
     close_window(app);
-    crate::status(app, format!("logging in to {ip} (the iDRAC takes ~5s)..."));
-    let console = login(ip, user, pass).map_err(|e| {
+    crate::status(app, format!("looking at {ip}..."));
+    let vendor = ilo::detect(ip)?;
+    crate::status(app, format!("logging in to the {} at {ip}...", vendor.name()));
+    let console = match vendor {
+        Vendor::Dell => login(ip, user, pass),
+        Vendor::Hpe => ilo::login(ip, user, pass),
+    }
+    .map_err(|e| {
         logout_all(); // a half-finished login must not leave a session behind
         e
     })?;
@@ -903,7 +1019,7 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
             }
         });
     }
-    crate::status(app, if embedded { format!("HTML5 console of {ip}") } else { format!("HTML5 console of {ip} opened in its own window") });
+    crate::status(app, if embedded { format!("HTML5 console of {ip} ({})", vendor.name()) } else { format!("HTML5 console of {ip} ({}) opened in its own window", vendor.name()) });
     Ok(())
 }
 
