@@ -1,0 +1,27 @@
+# Windows 11 in a virtual machine (QEMU/KVM inside the dockurr/windows image), used to build the Windows installer.
+# Run it through vm.py rather than by hand: python3 windows/vm.py up
+name: bobcat-windows   # own compose project, so it never replaces another repo's "windows" service (cheetoh has the same folder name)
+services:
+  windows:
+    image: dockurr/windows
+    container_name: bobcat-windows
+    environment:
+      VERSION: "11"
+      RAM_SIZE: "8G"
+      CPU_CORES: "8"
+      DISK_SIZE: "100G"
+      USERNAME: "builder"
+      PASSWORD: "${BOBCAT_WINDOWS_PASSWORD:-bobcat-build}"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:8007:8006"   # the web viewer (8007 so it does not clash with the cheetoh VM); RDP is not published
+    volumes:
+      - "${BOBCAT_WINDOWS_STORAGE:-${HOME}/.local/share/bobcat/windows}:/storage"   # the VM's disk (kept outside the repo)
+      - ./oem:/oem:ro             # install.bat runs once, after Windows is installed
+      - ..:/shared/src:ro         # the repository, seen in Windows as \\host.lan\Data\src
+      - ./out:/shared/out         # logs and finished installers, \\host.lan\Data\out
+    stop_grace_period: 2m
