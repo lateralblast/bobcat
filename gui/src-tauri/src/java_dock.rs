@@ -157,7 +157,12 @@ fn largest(app: &El) -> Option<(El, Rect)> {
 /// else the largest big one.
 fn console_window(viewer: &El, ip: &str) -> Option<(El, Rect)> {
     let all: Vec<(El, Rect)> = viewer.windows().into_iter().filter_map(|w| w.frame().map(|f| (w, f))).collect();
-    if let Some(i) = all.iter().position(|(w, _)| w.title().contains(ip)) {
+    // Dell titles the window with the address; the iLO's is "iLO Integrated Remote Console - ..."
+    // (and may be small when it starts, so its size cannot be used to find it)
+    if let Some(i) = all.iter().position(|(w, _)| {
+        let t = w.title();
+        t.contains(ip) || t.contains("Integrated Remote Console")
+    }) {
         return all.into_iter().nth(i);
     }
     all.into_iter().filter(|(_, f)| f.w >= 640.0 && f.h >= 480.0).max_by(|a, b| (a.1.w * a.1.h).total_cmp(&(b.1.w * b.1.h)))

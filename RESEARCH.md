@@ -163,6 +163,8 @@ Works. The iLO serves its Java console as an applet jar that needs no login: `GE
 
 ## MicroServer Gen8 / iLO 4: the virtual keyboard does nothing (2026-10-16)
 
+**Solved (2026-10-16, user-confirmed): a physical USB keyboard was plugged into the server; after unplugging it the virtual keyboard works remotely.** The iLO's virtual keyboard did not work while a real keyboard was attached to the host. The leads below are kept for history; none is needed.
+
 Symptom: with the iLO 4 at 192.168.11.23 (MicroServer Gen8, host sitting in the ROM-Based Setup Utility) no key typed in a console reaches the server. The same in three clients, so it is not bobcat: bobcat's HTML5 console (the page's own handler logs correct HID reports, see the earlier notes), Safari's own iLO console, and the Java applet (2.0.2, user-confirmed). Firmware 2.80 and then 2.82 (updated by the user): no change. No iLO 4 version later than 2.82 was found (a web search found nothing newer than 2.70 in its results, which is not proof; HPE's support site was not searched directly). The mouse works.
 
 Leads from a web search (forum posts and one vendor page, none confirmed for this server, none tried yet):

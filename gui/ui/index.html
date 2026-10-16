@@ -77,7 +77,7 @@
     </select>
     <button id="certbtn">Certificate</button>
     <button class="vnc-only" id="cad">Ctrl+Alt+Del</button>
-    <select class="no-java" id="zoom" title="Text size" aria-label="Text size">
+    <select id="zoom" title="Text size (the iLO Java console: picture size)" aria-label="Text size">
         <option value="0.5">50%</option>
         <option value="0.75">75%</option>
         <option value="1" selected>100%</option>
@@ -85,6 +85,7 @@
         <option value="1.5">150%</option>
         <option value="2">200%</option>
         <option value="fit">Fit window</option>
+        <option value="stretch" class="java-only" hidden disabled>Stretch to window</option>
       </select>
   </div>
   <div class="row amt-only hidden" id="mediarow">

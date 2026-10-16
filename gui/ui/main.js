@@ -84,6 +84,7 @@ $('go').onclick = () => {
   // Remember was ticked off for a loaded entry: delete it
   if (!remember && savedFor) { invoke('forget_password', savedFor); savedFor = null; }
   if (proto === 'java') {
+    invoke('java_zoom', { factor: $('zoom').value }); // the iLO console starts at the selected picture size
     invoke('connect_java', { ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember });
   } else if (proto === 'html5') {
     reportLayout();
@@ -165,6 +166,7 @@ function fitWindow() {
 }
 $('zoom').onchange = () => {
   try { localStorage.setItem('bobcat.zoom', $('zoom').value); } catch (_) {}
+  if ($('proto').value === 'java') { invoke('java_zoom', { factor: $('zoom').value }); return; }
   if ($('proto').value === 'html5') { invoke('html5_zoom', { factor: $('zoom').value === 'fit' ? 1 : Number($('zoom').value) }); return; }
   if (!isCanvas($('proto').value)) { applyTermFont(); return; }
   applyZoom();
@@ -564,6 +566,8 @@ function setProto() {
   hide('.login-only', proto === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
   hide('.layout-sel', kind === 'java' || kind === 'text'); // the keyboard layout pasting follows
+  document.querySelectorAll('#zoom .java-only').forEach((o) => { o.hidden = o.disabled = kind !== 'java'; }); // Stretch is for the iLO Java console
+  if (kind !== 'java' && $('zoom').value === 'stretch') $('zoom').value = 'fit';
   hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
   hide('.java-mac', kind === 'java' && !/Mac|Linux/.test(navigator.platform)); // Copy and Paste reach it on macOS and Linux
   $('wrap').classList.toggle('hidden', kind !== 'vnc');

@@ -21,6 +21,9 @@ const MAIN_CLASS: &str = "com.avocent.idrac.kvm.Main";
 
 /// Process id of the running viewer. The thread that waits for it owns the child itself.
 static VIEWER_PID: Mutex<Option<u32>> = Mutex::new(None);
+/// The iLO host's input (commands after the parameters) and the picture scale the page last asked for.
+static ILO_STDIN: Mutex<Option<std::process::ChildStdin>> = Mutex::new(None);
+static ILO_ZOOM: Mutex<String> = Mutex::new(String::new());
 
 fn config_dir() -> PathBuf {
     let mut p = crate::pins_path();
@@ -458,7 +461,14 @@ fn launch_ilo(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) 
         for (n, v) in &params {
             text.push_str(&format!("{n}={v}\n"));
         }
+        text.push('\n'); // an empty line ends the parameters
+        let zoom = ILO_ZOOM.lock().unwrap().clone();
+        if !zoom.is_empty() {
+            text.push_str(&format!("zoom={zoom}\n"));
+        }
         stdin.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+        *ILO_STDIN.lock().unwrap() = Some(stdin);
     }
     if html5::debug_on() {
         eprintln!("[bobcat] iLO Java console started (log: {})", dir.join("viewer.log").display());
@@ -627,6 +637,17 @@ pub fn connect_java(app: AppHandle, ip: String, user: String, pass: String, reme
             crate::status(&app, format!("error: {e}"));
         }
     });
+}
+
+/// The picture scale of the iLO Java console (`fit` or a factor). Remembered for the next
+/// connection; sent to the running host (the Dell viewer has no such control).
+#[tauri::command]
+pub fn java_zoom(factor: String) {
+    use std::io::Write;
+    *ILO_ZOOM.lock().unwrap() = factor.clone();
+    if let Some(stdin) = ILO_STDIN.lock().unwrap().as_mut() {
+        let _ = stdin.write_all(format!("zoom={factor}\n").as_bytes()).and_then(|_| stdin.flush());
+    }
 }
 
 #[tauri::command]
