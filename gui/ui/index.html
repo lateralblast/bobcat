@@ -123,6 +123,16 @@
     <button id="amtider" title="Switch IDE-R (virtual media) on in the device">Enable IDE-R</button>
     <span id="amtnote" title="Result of the last action"></span>
   </div>
+  <div class="row hidden" id="ilorow">
+    <span title="Power and IPMI controls of the HPE iLO (its CLI over SSH)">iLO power</span>
+    <button id="ilostatus" title="Power state and whether IPMI over LAN is on">Status</button>
+    <button data-ilo="on">On</button>
+    <button data-ilo="reset" class="confirm" title="Click twice: this restarts the server">Reset</button>
+    <button data-ilo="off" class="confirm" title="Click twice: this shuts the server down (power button press)">Off</button>
+    <button data-ilo="off-hard" class="confirm" title="Click twice: this cuts the power (power button held)">Hard off</button>
+    <button id="iloipmi" title="Switch IPMI over LAN on in the iLO (needed by the SOL protocol)">Enable IPMI</button>
+    <span id="ilonote" title="Result of the last action"></span>
+  </div>
 </div>
 <div id="term" class="hidden"></div>
 <div id="html5note" class="hidden"><p>The iDRAC HTML5 console appears here when you connect.</p><p>Disconnect (or closing the app) logs the session out of the iDRAC.</p></div>

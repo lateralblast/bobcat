@@ -14,6 +14,7 @@ mod amt_redir;
 mod html5;
 mod html5_tools;
 mod ilo;
+mod ilo_control;
 mod ilo_relay;
 mod java_console;
 #[cfg(target_os = "macos")]
@@ -749,6 +750,55 @@ fn emit_term(app: &AppHandle, bytes: &[u8]) {
 
 /// Text console through the iDRAC's SSH shell (`console com2`). Credentials are
 /// handled in-process by ssh2. NOTE: the SSH host key is not verified (ISSUES.md).
+/// The SSH identification line the BMC sends first (iLO 4: `SSH-2.0-mpSSH_0.2.1`).
+fn ssh_ident(ip: &str) -> Option<String> {
+    let addr = format!("{ip}:22").parse().ok()?;
+    let mut tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).ok()?;
+    tcp.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
+    let mut line = Vec::new();
+    let mut b = [0u8; 1];
+    while line.len() < 255 && tcp.read(&mut b).ok()? == 1 && b[0] != b'\n' {
+        line.push(b[0]);
+    }
+    Some(String::from_utf8_lossy(&line).trim().to_string())
+}
+
+/// Is this BMC an HPE iLO? `BOBCAT_BMC=ilo|idrac` decides, else the SSH banner (iLO 4: mpSSH).
+fn is_ilo(ip: &str) -> bool {
+    match std::env::var("BOBCAT_BMC").ok().as_deref() {
+        Some("ilo") => return true,
+        Some("idrac") => return false,
+        _ => {}
+    }
+    ssh_ident(ip).is_some_and(|l| l.contains("mpSSH"))
+}
+
+/// iLO: the SSH session is the iLO's own CLI. Open a shell, show what it prints until its prompt,
+/// then start the virtual serial port with `vsp` (leave it with ESC then `(`). `BOBCAT_ILO_VSP=0`
+/// stays in the CLI (to look around: `help`, `show /map1`).
+fn ilo_ssh_start(sess: &ssh2::Session, ch: &mut ssh2::Channel, echo: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+    ch.shell().map_err(|e| e.to_string())?;
+    sess.set_timeout(5000);
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    while !String::from_utf8_lossy(&seen).contains("hpiLO->") {
+        match ch.read(&mut buf) {
+            Ok(0) | Err(_) => break, // no prompt (or it ends differently): go on anyway
+            Ok(n) => {
+                echo(&buf[..n]);
+                seen.extend_from_slice(&buf[..n]);
+            }
+        }
+    }
+    sess.set_timeout(0);
+    if std::env::var("BOBCAT_ILO_VSP").is_ok_and(|v| v == "0") {
+        return Ok(());
+    }
+    ch.write_all(b"vsp\r").map_err(|e| e.to_string())
+}
+
+const ILO_IPMI_HINT: &str = "If the connection failed, IPMI over LAN is probably off on the iLO (it is by default): iLO web page, Administration > Access Settings > IPMI/DCMI over LAN. The BIOS also has to redirect its console to the virtual serial port (RBSU > System Options > Serial Port Options).";
+
 fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, cols: u16, rows: u16, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
     let addr = (ip, 22)
         .to_socket_addrs()
@@ -769,8 +819,13 @@ fn text_ssh(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, c
     let mut ch = sess.channel_session().map_err(|e| e.to_string())?;
     ch.request_pty("xterm-256color", None, Some((cols as u32, rows as u32, 0, 0)))
         .map_err(|e| e.to_string())?;
-    ch.exec("console com2").map_err(|e| e.to_string())?;
-    status(app, format!("connected: serial console of {ip} (SSH). Ctrl+\\ ends the session"));
+    if is_ilo(ip) {
+        ilo_ssh_start(&sess, &mut ch, &mut |b| emit_term(app, b))?;
+        status(app, format!("connected: the iLO {ip} (SSH, virtual serial port: leave it with ESC then `(`). Ctrl+\\ ends the session"));
+    } else {
+        ch.exec("console com2").map_err(|e| e.to_string())?;
+        status(app, format!("connected: serial console of {ip} (SSH). Ctrl+\\ ends the session"));
+    }
     sess.set_blocking(false);
     let mut buf = vec![0u8; 8192];
     loop {
@@ -905,18 +960,25 @@ fn text_sol(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, c
         thread::spawn(move || {
             let mut buf = vec![0u8; 8192];
             let mut saved = !remember;
+            let mut operational = false;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         // ipmitool says this once the iDRAC has accepted the login
-                        if !saved && String::from_utf8_lossy(&buf[..n]).contains("SOL Session operational") {
-                            keychain::remember(&user, &ip, &pass);
-                            saved = true;
+                        if String::from_utf8_lossy(&buf[..n]).contains("SOL Session operational") {
+                            operational = true;
+                            if !saved {
+                                keychain::remember(&user, &ip, &pass);
+                                saved = true;
+                            }
                         }
                         emit_term(&app, &buf[..n]);
                     }
                 }
+            }
+            if !operational && is_ilo(&ip) {
+                emit_term(&app, format!("\r\n{ILO_IPMI_HINT}\r\n").as_bytes());
             }
             done.store(true, std::sync::atomic::Ordering::SeqCst);
         });
@@ -1320,7 +1382,7 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, set_frame_channel, connect, connect_amt, connect_ard, connect_rdp, rdp_resize, amt_control::amt_status, amt_control::amt_power, amt_control::amt_boot, amt_control::amt_ider_enable, amt_control::amt_boot_iso, amt_media::pick_iso, amt_media::ider_mount, amt_media::ider_unmount, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_zoom, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, set_frame_channel, connect, connect_amt, connect_ard, connect_rdp, rdp_resize, amt_control::amt_status, amt_control::amt_power, amt_control::amt_boot, amt_control::amt_ider_enable, amt_control::amt_boot_iso, amt_media::pick_iso, amt_media::ider_mount, amt_media::ider_unmount, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_zoom, ilo_control::bmc_is_ilo, ilo_control::ilo_status, ilo_control::ilo_power, ilo_control::ilo_ipmi, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat");
 }

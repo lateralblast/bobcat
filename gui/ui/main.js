@@ -75,6 +75,7 @@ invoke('default_protocol').then(async (p) => {
   const pw = await invoke('default_password', { protocol: p });
   if (pw) $('pass').value = pw;
   await fillSaved();
+  setTimeout(() => updateIloRow(), 300); // BOBCAT_IP / BOBCAT_PROTOCOL preselect values
   invoke('autoconnect').then((a) => { if (a) $('go').click(); });
 });
 
@@ -645,6 +646,40 @@ $('amtbootiso').onclick = confirmed($('amtbootiso'), () => {
   invoke('amt_boot_iso', { ...amtArgs(), iso, sol: $('amtbootsol').checked });
 });
 listen('amt-note', (e) => amtNote(e.payload.text));
+
+// ---- HPE iLO power and IPMI controls (the row shows for an iLO with the console protocols) -----
+const iloArgs = () => ({ ip: $('ip').value, user: $('user').value || 'admin', pass: $('pass').value });
+const iloNote = (text) => { $('ilonote').textContent = text; $('ilonote').title = text; };
+const iloKnown = {}; // ip -> is an iLO
+async function updateIloRow() {
+  const proto = $('proto').value, ip = $('ip').value.trim();
+  const mine = ['html5', 'java', 'ssh', 'sol'].includes(proto) && ip;
+  if (!mine) { $('ilorow').classList.add('hidden'); return; }
+  if (!(ip in iloKnown)) { try { iloKnown[ip] = await invoke('bmc_is_ilo', { ip }); } catch (_) { iloKnown[ip] = false; } }
+  const still = $('ip').value.trim() === ip && ['html5', 'java', 'ssh', 'sol'].includes($('proto').value);
+  $('ilorow').classList.toggle('hidden', !(still && iloKnown[ip]));
+}
+const iloNeedPass = (f) => () => { if (!$('pass').value) { iloNote('enter the iLO password first'); return; } f(); };
+function iloConfirmed(btn, action) {
+  return () => {
+    if (!$('pass').value) { iloNote('enter the iLO password first'); return; }
+    if (btn.classList.contains('armed')) {
+      btn.classList.remove('armed'); btn.textContent = btn.dataset.label; clearTimeout(btn._t); action();
+    } else {
+      btn.dataset.label = btn.textContent; btn.textContent = 'Sure?'; btn.classList.add('armed');
+      btn._t = setTimeout(() => { btn.classList.remove('armed'); btn.textContent = btn.dataset.label; }, 4000);
+    }
+  };
+}
+$('ilostatus').onclick = iloNeedPass(() => invoke('ilo_status', iloArgs()));
+document.querySelectorAll('#ilorow button[data-ilo]').forEach((b) => {
+  const run = () => invoke('ilo_power', { ...iloArgs(), action: b.dataset.ilo });
+  b.onclick = b.classList.contains('confirm') ? iloConfirmed(b, run) : iloNeedPass(run);
+});
+$('iloipmi').onclick = iloNeedPass(() => invoke('ilo_ipmi', { ...iloArgs(), on: true }));
+listen('ilo-note', (e) => iloNote(e.payload.text));
+$('ip').addEventListener('change', () => updateIloRow());
+$('proto').addEventListener('change', () => updateIloRow());
 setProto();
 
 // ---- HTML5 console embedded below the toolbar ----------------------------

@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 2.0.3
+// Version: 2.0.4
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};
@@ -93,6 +93,20 @@ enum Power {
 }
 
 impl Power {
+    /// The iLO CLI command for the action (the iLO's POWER verb: ON, OFF = press, HOLD = press and
+    /// hold, RESET; NMI has its own verb).
+    fn ilo_command(self) -> Option<&'static str> {
+        match self {
+            Power::Status => Some("POWER"),
+            Power::On => Some("POWER ON"),
+            Power::Off => Some("POWER OFF"),
+            Power::OffHard => Some("POWER HOLD"),
+            Power::Reset => Some("POWER RESET"),
+            Power::Nmi => Some("NMI"),
+            Power::Cycle | Power::Sleep | Power::Hibernate => None,
+        }
+    }
+
     /// AMT's CIM_PowerManagementService number for the action.
     fn amt_state(self) -> Option<u32> {
         match self {
@@ -278,8 +292,9 @@ struct Args {
     #[arg(long, requires = "amt")]
     info: bool,
 
-    /// With --amt, show or change the power state
-    #[arg(long, value_enum, requires = "amt")]
+    /// Show or change the power state (an Intel AMT device with --amt, or an HPE iLO; on an iLO:
+    /// status, on, off, off-hard, reset and nmi)
+    #[arg(long, value_enum)]
     power: Option<Power>,
 
     /// With --amt, try several shapes of the KVM settings Put and print the device's answer to each
@@ -523,6 +538,103 @@ fn enable_sol(sess: &Session) -> Result<(), String> {
     }
     println!("\nSOL: ipmitool -I lanplus -H <ip> -U <user> -E sol activate");
     println!("  or over SSH to the iDRAC: console com2");
+    Ok(())
+}
+
+/// An iLO CLI (SMASH CLP) session over an SSH shell (an exec channel never ends on an iLO, so it
+/// cannot be used for single commands). Each command's output is read up to the next prompt.
+struct IloCli {
+    ch: ssh2::Channel,
+}
+
+impl IloCli {
+    fn open(sess: &Session) -> Result<IloCli, String> {
+        let mut ch = sess.channel_session().map_err(|e| e.to_string())?;
+        ch.request_pty("vt100", None, Some((200, 50, 0, 0))).map_err(|e| e.to_string())?;
+        ch.shell().map_err(|e| e.to_string())?;
+        sess.set_timeout(15000);
+        let mut cli = IloCli { ch };
+        cli.read_until_prompt(false)?; // the login banner
+        Ok(cli)
+    }
+
+    fn read_until_prompt(&mut self, need_status: bool) -> Result<String, String> {
+        let mut seen = String::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = self.ch.read(&mut buf).map_err(|e| format!("no answer from the iLO CLI ({e}); got: {}", seen.trim()))?;
+            if n == 0 {
+                return Err(format!("the iLO CLI closed the session; got: {}", seen.trim()));
+            }
+            seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+            let after = if need_status { seen.find("status=") } else { Some(0) };
+            if after.is_some_and(|i| seen[i..].contains("hpiLO->")) {
+                return Ok(seen);
+            }
+        }
+    }
+
+    /// Run one command; it reports `status=0` when it worked.
+    fn run(&mut self, cmd: &str) -> Result<String, String> {
+        self.ch.write_all(format!("{cmd}\r").as_bytes()).map_err(|e| e.to_string())?;
+        let out = self.read_until_prompt(true)?;
+        if out.contains("COMMAND PROCESSING FAILED") || !out.contains("status=0") {
+            return Err(format!("iLO command `{cmd}` failed: {}", out.trim()));
+        }
+        Ok(out)
+    }
+
+    fn close(mut self) {
+        let _ = self.ch.write_all(b"exit\r");
+        let _ = self.ch.close();
+    }
+}
+
+/// `--power` on an iLO: the iLO CLI's POWER verb over SSH.
+fn ilo_power(args: &Args, pass: &str) -> Result<(), String> {
+    let p = args.power.ok_or("no power action")?;
+    if !is_ilo(&args.ip) {
+        return Err("--power works with an Intel AMT device (--amt) or an HPE iLO; this BMC is not an iLO (BOBCAT_BMC=ilo forces it)".into());
+    }
+    let name = p.to_possible_value().map(|v| v.get_name().to_string()).unwrap_or_default();
+    let cmd = p.ilo_command().ok_or_else(|| format!("--power {name} is not available on an iLO (status, on, off, off-hard, reset, nmi are)"))?;
+    if !matches!(p, Power::Status | Power::On) && !args.yes {
+        let ans = rpassword::prompt_password(format!("Really send power action `{name}` to {}? Type yes: ", args.ip)).map_err(|e| e.to_string())?;
+        if ans.trim() != "yes" {
+            return Err("stopped".into());
+        }
+    }
+    let sess = connect(&args.ip, &args.user, pass, args.trust_new_hostkey)?;
+    let mut cli = IloCli::open(&sess)?;
+    let r = cli.run(cmd);
+    cli.close();
+    // the iLO's answer without the echoed command and the prompt
+    let out = r?;
+    let text: Vec<&str> = out.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("</>hpiLO->") && *l != cmd).collect();
+    println!("{}", text.join("\n"));
+    Ok(())
+}
+
+/// iLO: switch IPMI/DCMI over LAN (UDP 623, what `ipmitool ... sol activate` needs) on or off.
+fn ilo_ipmi(cli: &mut IloCli, on: bool) -> Result<(), String> {
+    let want = if on { "yes" } else { "no" };
+    let prop = "oemhp_ipmi_dcmi_overlan_enable";
+    let now = cli.run("show /map1/config1")?;
+    if now.lines().any(|l| l.trim() == format!("{prop}={want}")) {
+        println!("IPMI/DCMI over LAN is already {}.", if on { "enabled" } else { "disabled" });
+    } else {
+        cli.run(&format!("set /map1/config1 {prop}={want}"))?;
+        let after = cli.run("show /map1/config1")?;
+        if !after.lines().any(|l| l.trim() == format!("{prop}={want}")) {
+            return Err(format!("the iLO did not take {prop}={want}"));
+        }
+        println!("IPMI/DCMI over LAN is now {}.", if on { "enabled" } else { "disabled" });
+    }
+    if on {
+        println!("SOL: ipmitool -I lanplus -H <ip> -U <user> -E sol activate");
+        println!("  or over SSH to the iLO: bobcat-cli --console ssh (runs `vsp`)");
+        println!("The server's BIOS must send its console to the virtual serial port (RBSU > System Options > Serial Port Options, BIOS Serial Console & EMS); that is a host setting and is not changed here.");
+    }
     Ok(())
 }
 
@@ -906,7 +1018,8 @@ fn console_sol(ip: &str, user: &str, pass: &str) -> Result<(), String> {
                 } else {
                     Err(format!(
                         "ipmitool exited with {status} (if a SOL session is already active, run: \
-                         ipmitool -I lanplus -H {ip} -U {user} -E sol deactivate)"
+                         ipmitool -I lanplus -H {ip} -U {user} -E sol deactivate){}",
+                        if is_ilo(ip) { format!("\n{ILO_IPMI_HINT}") } else { String::new() }
                     ))
                 };
             }
@@ -1115,6 +1228,55 @@ fn console_amt_sol(args: &Args, pass: &str) -> Result<(), String> {
 
 /// Serial console through the iDRAC's SSH shell (`console com2`), with the
 /// credentials handled in-process by ssh2 (nothing on a command line).
+/// The SSH identification line the BMC sends first (iLO 4: `SSH-2.0-mpSSH_0.2.1`).
+fn ssh_ident(ip: &str) -> Option<String> {
+    let addr = format!("{ip}:22").parse().ok()?;
+    let mut tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).ok()?;
+    tcp.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
+    let mut line = Vec::new();
+    let mut b = [0u8; 1];
+    while line.len() < 255 && tcp.read(&mut b).ok()? == 1 && b[0] != b'\n' {
+        line.push(b[0]);
+    }
+    Some(String::from_utf8_lossy(&line).trim().to_string())
+}
+
+/// Is this BMC an HPE iLO? `BOBCAT_BMC=ilo|idrac` decides, else the SSH banner (iLO 4: mpSSH).
+fn is_ilo(ip: &str) -> bool {
+    match std::env::var("BOBCAT_BMC").ok().as_deref() {
+        Some("ilo") => return true,
+        Some("idrac") => return false,
+        _ => {}
+    }
+    ssh_ident(ip).is_some_and(|l| l.contains("mpSSH"))
+}
+
+/// iLO: the SSH session is the iLO's own CLI. Open a shell, show what it prints until its prompt,
+/// then start the virtual serial port with `vsp` (leave it with ESC then `(`). `BOBCAT_ILO_VSP=0`
+/// stays in the CLI (to look around: `help`, `show /map1`).
+fn ilo_ssh_start(sess: &Session, ch: &mut ssh2::Channel, echo: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+    ch.shell().map_err(|e| e.to_string())?;
+    sess.set_timeout(5000);
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    while !String::from_utf8_lossy(&seen).contains("hpiLO->") {
+        match ch.read(&mut buf) {
+            Ok(0) | Err(_) => break, // no prompt (or it ends differently): go on anyway
+            Ok(n) => {
+                echo(&buf[..n]);
+                seen.extend_from_slice(&buf[..n]);
+            }
+        }
+    }
+    sess.set_timeout(0);
+    if std::env::var("BOBCAT_ILO_VSP").is_ok_and(|v| v == "0") {
+        return Ok(());
+    }
+    ch.write_all(b"vsp\r").map_err(|e| e.to_string())
+}
+
+const ILO_IPMI_HINT: &str = "If the connection failed, IPMI over LAN is probably off on the iLO (it is by default): iLO web page, Administration > Access Settings > IPMI/DCMI over LAN. The BIOS also has to redirect its console to the virtual serial port (RBSU > System Options > Serial Port Options).";
+
 fn console_ssh(ip: &str, user: &str, pass: &str, trust_new: bool) -> Result<(), String> {
     /// Why the console loop ended
     enum End {
@@ -1130,8 +1292,21 @@ fn console_ssh(ip: &str, user: &str, pass: &str, trust_new: bool) -> Result<(), 
     let mut ch = sess.channel_session().map_err(|e| e.to_string())?;
     let (cols, rows) = term_size();
     ch.request_pty("xterm", None, Some((cols, rows, 0, 0))).map_err(|e| e.to_string())?;
-    ch.exec("console com2").map_err(|e| e.to_string())?;
-    eprintln!("Connected to the serial console of {ip}. Press ~. (at the start of a line) or Ctrl+\\ to disconnect.");
+    if is_ilo(ip) {
+        ilo_ssh_start(&sess, &mut ch, &mut |b| {
+            let mut o = std::io::stdout();
+            o.write_all(b).ok();
+            o.flush().ok();
+        })?;
+        if std::env::var("BOBCAT_ILO_VSP").is_ok_and(|v| v == "0") {
+            eprintln!("\nConnected to the CLI of the iLO {ip} (`exit` leaves it). Press ~. (at the start of a line) or Ctrl+\\ to disconnect.");
+        } else {
+            eprintln!("\nConnected to the virtual serial port of the iLO {ip} (leave it with ESC then `(`). Press ~. (at the start of a line) or Ctrl+\\ to disconnect.");
+        }
+    } else {
+        ch.exec("console com2").map_err(|e| e.to_string())?;
+        eprintln!("Connected to the serial console of {ip}. Press ~. (at the start of a line) or Ctrl+\\ to disconnect.");
+    }
 
     let raw = RawMode::enter()?;
     sess.set_blocking(false);
@@ -1227,6 +1402,7 @@ fn go(args: Args) -> Result<(), String> {
     // The iDRAC login is only needed for racadm over SSH, SOL and the SSH console;
     // --console vnc uses the VNC password instead.
     let needs_login = args.amt
+        || args.power.is_some()
         || !args.enable.is_empty()
         || !args.disable.is_empty()
         || !args.disconnect.is_empty()
@@ -1258,7 +1434,7 @@ fn go(args: Args) -> Result<(), String> {
         },
         None => String::new(),
     };
-    if !args.amt && args.enable.is_empty() && args.disable.is_empty() && args.disconnect.is_empty() && args.console.is_none() {
+    if !args.amt && args.power.is_none() && args.enable.is_empty() && args.disable.is_empty() && args.disconnect.is_empty() && args.console.is_none() {
         println!("Target: {}@{}", args.user, args.ip);
         return Ok(());
     }
@@ -1309,6 +1485,9 @@ fn act(args: &Args, pass: &str, vncpass: &str) -> Result<(), String> {
         let sess = connect(&args.ip, &args.user, pass, args.trust_new_hostkey)?;
         configure(&sess, args)?;
         disconnect(&sess, &args.disconnect)?;
+    }
+    if !args.amt && args.power.is_some() {
+        ilo_power(args, pass)?;
     }
     match args.console {
         Some(Console::Sol) if args.amt => console_amt_sol(args, pass)?,
@@ -1632,6 +1811,26 @@ fn amt_act(args: &Args, pass: &str) -> Result<Option<String>, String> {
 }
 
 fn configure(sess: &Session, args: &Args) -> Result<(), String> {
+    if is_ilo(&args.ip) {
+        // an iLO has no racadm: only IPMI over LAN (for Serial over LAN) can be switched here
+        for f in args.enable.iter().chain(&args.disable) {
+            if *f != Feature::Sol {
+                return Err("for an iLO only --enable/--disable sol (IPMI over LAN) is supported".into());
+            }
+        }
+        let mut cli = IloCli::open(sess)?;
+        let r = (|| {
+            if args.enable.contains(&Feature::Sol) {
+                ilo_ipmi(&mut cli, true)?;
+            }
+            if args.disable.contains(&Feature::Sol) {
+                ilo_ipmi(&mut cli, false)?;
+            }
+            Ok(())
+        })();
+        cli.close();
+        return r;
+    }
     for f in &args.enable {
         match f {
             Feature::Vnc => enable_vnc(sess, args.vncpass.as_deref(), args.port, args.sslebl, args.timeout)?,
