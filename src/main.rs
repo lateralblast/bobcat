@@ -1,5 +1,5 @@
 // bobcat-cli - iDRAC management command line tool
-// Version: 1.9.5
+// Version: 1.9.6
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 
 use std::io::{Read, Write};

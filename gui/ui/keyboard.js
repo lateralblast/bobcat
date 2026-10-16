@@ -101,7 +101,7 @@ async function oskPress(key) {
   if (Array.isArray(key)) sym = keysymOf(shifted ? key[1] : key[0]);
   else if (key in OSK_NAMED) sym = OSK_NAMED[key];
   else sym = keysymOf(shifted ? key.toUpperCase() : key);
-  if ($('proto').value !== 'vnc') {
+  if (!isCanvas($('proto').value)) {
     const text = keysymToText(sym, osk.latched);
     if (text) await invoke('term_input', { data: btoa(String.fromCharCode(...new TextEncoder().encode(text))) });
     osk.latched.clear();

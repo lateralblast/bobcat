@@ -4,6 +4,7 @@
 
 #[allow(dead_code)]
 mod amt;
+mod ard;
 mod amt_control;
 mod amt_ider;
 mod amt_media;
@@ -28,6 +29,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use serde::Serialize;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, State};
 use vnc::client::{AuthChoice, AuthMethod};
 use vnc::{Client, Encoding, PixelFormat, Rect};
@@ -306,6 +308,8 @@ fn tls_forwarder(ip: &str, port: u16) -> Result<u16, String> {
             let tls = cfg.connect("idrac", tcp).map_err(|e| format!("tls handshake: {e}"))?;
             check_pin(&host, &tls)?;
             let (local_conn, _) = listener.accept().map_err(|e| e.to_string())?;
+            local_conn.set_nodelay(true).ok();
+            tls.get_ref().set_nodelay(true).ok();
 
             // openssl streams aren't splittable: share one behind a lock and
             // poll with short read timeouts so both directions make progress.
@@ -357,20 +361,40 @@ fn tls_forwarder(ip: &str, port: u16) -> Result<u16, String> {
     Ok(local)
 }
 
-/// Zrle (compressed) first, Raw as fallback. BOBCAT_ENCODING=raw forces Raw.
-/// CopyRect is not requested: we don't apply it locally.
+/// Zrle (compressed) first, then CopyRect (scrolling and moving windows cost the server a few bytes
+/// instead of the pixels; the page applies it locally), Raw as fallback. BOBCAT_ENCODING=raw forces
+/// Raw, BOBCAT_COPYRECT=0 leaves CopyRect out.
 fn encodings() -> Vec<Encoding> {
     match std::env::var("BOBCAT_ENCODING").as_deref() {
         Ok("raw") => vec![Encoding::Raw],
-        _ => vec![Encoding::Zrle, Encoding::Raw],
+        _ if std::env::var("BOBCAT_COPYRECT").as_deref() == Ok("0") => vec![Encoding::Zrle, Encoding::Raw],
+        _ => vec![Encoding::Zrle, Encoding::CopyRect, Encoding::Raw],
     }
 }
 
-/// Convert server pixels (true colour, 16 or 32 bpp) to RGBA8.
-fn to_rgba(f: &PixelFormat, px: &[u8]) -> Vec<u8> {
+/// Convert server pixels (true colour, 16 or 32 bpp) to RGBA8, appended to `out`.
+fn rgba_into(f: &PixelFormat, px: &[u8], out: &mut Vec<u8>) {
     let bpp = f.bits_per_pixel as usize / 8;
+    // the layout this viewer asks for (little-endian B,G,R,X, 8 bits each) is a plain byte swap
+    if bpp == 4
+        && !f.big_endian
+        && f.red_max == 255
+        && f.green_max == 255
+        && f.blue_max == 255
+        && (f.red_shift, f.green_shift, f.blue_shift) == (16, 8, 0)
+    {
+        let start = out.len();
+        out.resize(start + px.len() / 4 * 4, 0);
+        for (d, p) in out[start..].chunks_exact_mut(4).zip(px.chunks_exact(4)) {
+            d[0] = p[2];
+            d[1] = p[1];
+            d[2] = p[0];
+            d[3] = 255;
+        }
+        return;
+    }
     let scale = |v: u32, max: u16| -> u8 { ((v * 255 + max as u32 / 2) / max.max(1) as u32) as u8 };
-    let mut out = Vec::with_capacity(px.len() / bpp * 4);
+    out.reserve(px.len() / bpp * 4);
     for p in px.chunks_exact(bpp) {
         let v = match (bpp, f.big_endian) {
             (4, false) => u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
@@ -383,8 +407,78 @@ fn to_rgba(f: &PixelFormat, px: &[u8]) -> Vec<u8> {
         let b = (v >> f.blue_shift) & f.blue_max as u32;
         out.extend_from_slice(&[scale(r, f.red_max), scale(g, f.green_max), scale(b, f.blue_max), 255]);
     }
-    out
 }
+
+/// The page's channel for the picture. Pixels go over it as raw bytes (no base64, no JSON):
+/// byte 0 is the kind, then little-endian u16s. Kind 0 = rectangle (x, y, w, h, then w*h RGBA
+/// pixels), kind 1 = the screen size changed (w, h), kind 2 = copy a rectangle within the picture
+/// (source x, y, destination x, y, w, h). Without a channel the old events are used.
+static FRAMES: Mutex<Option<Channel<InvokeResponseBody>>> = Mutex::new(None);
+
+#[tauri::command]
+fn set_frame_channel(channel: Channel<InvokeResponseBody>) {
+    // BOBCAT_FRAMES=events goes back to base64 events (in case the channel misbehaves in a web view)
+    if std::env::var("BOBCAT_FRAMES").as_deref() == Ok("events") {
+        return;
+    }
+    *FRAMES.lock().unwrap() = Some(channel);
+}
+
+/// With a channel, messages are collected in `batch` and sent together by `flush_frames` (one call
+/// into the web view per server update instead of one per rectangle: the Mac sends a drag as
+/// hundreds of 64x64 tiles, and a message each cost about 0.3 ms). The page reads the messages
+/// one after another. Without a channel each goes out at once as an event.
+fn put_size(app: &AppHandle, chan: &Option<Channel<InvokeResponseBody>>, batch: &mut Vec<u8>, w: u16, h: u16) {
+    if chan.is_some() {
+        batch.push(1u8);
+        batch.extend_from_slice(&w.to_le_bytes());
+        batch.extend_from_slice(&h.to_le_bytes());
+    } else {
+        let _ = app.emit("vnc-resize", Size { w, h });
+    }
+}
+
+fn put_copy(app: &AppHandle, chan: &Option<Channel<InvokeResponseBody>>, batch: &mut Vec<u8>, src: &Rect, dst: &Rect) {
+    if chan.is_some() {
+        batch.push(2u8);
+        for v in [src.left, src.top, dst.left, dst.top, dst.width, dst.height] {
+            batch.extend_from_slice(&v.to_le_bytes());
+        }
+    } else {
+        let _ = app.emit("vnc-copy", [src.left, src.top, dst.left, dst.top, dst.width, dst.height]);
+    }
+}
+
+fn put_rect(app: &AppHandle, chan: &Option<Channel<InvokeResponseBody>>, batch: &mut Vec<u8>, fmt: &PixelFormat, r: &Rect, px: &[u8]) {
+    if chan.is_some() {
+        batch.reserve(9 + px.len() / (fmt.bits_per_pixel as usize / 8).max(1) * 4);
+        batch.push(0u8);
+        for v in [r.left, r.top, r.width, r.height] {
+            batch.extend_from_slice(&v.to_le_bytes());
+        }
+        rgba_into(fmt, px, batch);
+    } else {
+        let mut rgba = Vec::new();
+        rgba_into(fmt, px, &mut rgba);
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let _ = app.emit("vnc-frame", Frame { x: r.left, y: r.top, w: r.width, h: r.height, data: b64.encode(rgba) });
+    }
+}
+
+/// Send what has been collected (see `put_size`).
+fn flush_frames(chan: &Option<Channel<InvokeResponseBody>>, batch: &mut Vec<u8>) {
+    if batch.is_empty() {
+        return;
+    }
+    if let Some(ch) = chan {
+        let _ = ch.send(InvokeResponseBody::Raw(std::mem::take(batch)));
+    } else {
+        batch.clear();
+    }
+}
+
+/// A batch this big is sent even if the update is not finished, so the picture keeps coming.
+const BATCH_LIMIT: usize = 4 << 20;
 
 fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bool, cmds: &std::sync::mpsc::Receiver<Cmd>) -> Result<(), String> {
     let real_ip = ip;
@@ -402,6 +496,14 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
         .ok_or("bad address")?;
     let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
         .map_err(|e| format!("connect failed: {e}"))?;
+    // The vnc crate writes each field of a message (a pointer event is four writes) separately. With
+    // Nagle's algorithm on, every message after the first packet waits for the peer's delayed ACK
+    // (tens of milliseconds), which made mouse moves and update requests, and so scrolling and
+    // dragging, sluggish.
+    // (BOBCAT_NODELAY=0 leaves Nagle's algorithm on, to compare)
+    if std::env::var("BOBCAT_NODELAY").as_deref() != Ok("0") {
+        tcp.set_nodelay(true).ok();
+    }
 
     let mut key = [0u8; 8];
     for (i, b) in pass.bytes().take(8).enumerate() {
@@ -448,15 +550,24 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
         eprintln!("[bobcat] pixel format: {fmt:?}");
     }
 
+    let chan = FRAMES.lock().unwrap().clone();
+    let debug = std::env::var("BOBCAT_DEBUG").is_ok();
     let (mut w, mut h) = client.size();
     status(app, format!("connected: {} ({w}x{h})", client.name()));
-    let _ = app.emit("vnc-resize", Size { w, h });
+    let mut batch: Vec<u8> = Vec::new();
+    put_size(app, &chan, &mut batch, w, h);
+    flush_frames(&chan, &mut batch);
     let full = |w, h| Rect { left: 0, top: 0, width: w, height: h };
     client.request_update(full(w, h), false).map_err(|e| e.to_string())?;
 
-    let b64 = base64::engine::general_purpose::STANDARD;
     let started = std::time::Instant::now();
     let (mut rects, mut pixels_total) = (0u64, 0u64);
+    let mut busy = Duration::ZERO; // time spent converting and sending rectangles (BOBCAT_DEBUG)
+    // BOBCAT_DEBUG statistics per server update (first rectangle to end of update): count, total and
+    // worst time, rectangles, pixels and copies
+    let (mut updates, mut upd_total, mut upd_worst) = (0u64, Duration::ZERO, Duration::ZERO);
+    let (mut upd_rects, mut upd_px, mut copies) = (0u64, 0u64, 0u64);
+    let mut upd_start: Option<std::time::Instant> = None;
     loop {
         while let Ok(cmd) = cmds.try_recv() {
             match cmd {
@@ -474,33 +585,61 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
             }
         }
         match client.poll_event() {
-            None => thread::sleep(Duration::from_millis(5)),
+            None => {
+                flush_frames(&chan, &mut batch); // nothing more waiting: show what has arrived
+                thread::sleep(Duration::from_millis(1));
+            }
             Some(vnc::client::Event::PutPixels(r, px)) => {
                 rects += 1;
+                upd_rects += 1;
+                upd_px += r.width as u64 * r.height as u64;
+                upd_start.get_or_insert_with(std::time::Instant::now);
                 pixels_total += r.width as u64 * r.height as u64;
-                if std::env::var("BOBCAT_DEBUG").is_ok() && (rects <= 3 || rects % 200 == 0) {
+                let t0 = std::time::Instant::now();
+                put_rect(app, &chan, &mut batch, &fmt, &r, &px);
+                if batch.len() >= BATCH_LIMIT {
+                    flush_frames(&chan, &mut batch);
+                }
+                busy += t0.elapsed();
+                if debug && (rects <= 3 || rects % 200 == 0) {
                     eprintln!(
-                        "[bobcat] +{:.1}s rect #{rects} {},{} {}x{} ({} Mpx total)",
-                        started.elapsed().as_secs_f32(), r.left, r.top, r.width, r.height, pixels_total / 1_000_000
+                        "[bobcat] +{:.1}s rect #{rects} {},{} {}x{} ({} Mpx total, {} ms converting and sending, {})",
+                        started.elapsed().as_secs_f32(), r.left, r.top, r.width, r.height, pixels_total / 1_000_000,
+                        busy.as_millis(), if chan.is_some() { "channel" } else { "events" }
                     );
                 }
-                let rgba = to_rgba(&fmt, &px);
-                let _ = app.emit(
-                    "vnc-frame",
-                    Frame { x: r.left, y: r.top, w: r.width, h: r.height, data: b64.encode(rgba) },
-                );
             }
-            Some(vnc::client::Event::CopyPixels { .. }) => {
-                // Not applied locally; ask for a full refresh instead.
-                client.request_update(full(w, h), false).map_err(|e| e.to_string())?;
+            Some(vnc::client::Event::CopyPixels { src, dst }) => {
+                copies += 1;
+                upd_start.get_or_insert_with(std::time::Instant::now);
+                put_copy(app, &chan, &mut batch, &src, &dst);
             }
             Some(vnc::client::Event::Resize(nw, nh)) => {
                 w = nw;
                 h = nh;
-                let _ = app.emit("vnc-resize", Size { w, h });
+                put_size(app, &chan, &mut batch, w, h);
                 client.request_update(full(w, h), false).map_err(|e| e.to_string())?;
             }
             Some(vnc::client::Event::EndOfFrame) => {
+                let t0 = std::time::Instant::now();
+                flush_frames(&chan, &mut batch);
+                busy += t0.elapsed();
+                if let Some(t) = upd_start.take() {
+                    let d = t.elapsed();
+                    updates += 1;
+                    upd_total += d;
+                    upd_worst = upd_worst.max(d);
+                    if debug && updates % 50 == 0 {
+                        eprintln!(
+                            "[bobcat] {updates} updates: avg {:.1} ms, worst {} ms (first rectangle to end of update); {:.1} rects, {:.2} Mpx per update; {copies} copies; {} ms converting and sending",
+                            upd_total.as_secs_f64() * 1000.0 / updates as f64,
+                            upd_worst.as_millis(),
+                            upd_rects as f64 / updates as f64,
+                            upd_px as f64 / updates as f64 / 1e6,
+                            busy.as_millis(),
+                        );
+                    }
+                }
                 client.request_update(full(w, h), true).map_err(|e| e.to_string())?;
             }
             Some(vnc::client::Event::Disconnected(e)) => {
@@ -550,7 +689,7 @@ fn trust_cert(kind: Option<String>) -> Result<(), String> {
 #[tauri::command]
 fn default_password(protocol: Option<String>) -> String {
     let var = match protocol.as_deref() {
-        Some("ssh") | Some("sol") | Some("html5") | Some("java") | Some("amt") | Some("amtsol") => "BOBCAT_PASS",
+        Some("ssh") | Some("sol") | Some("html5") | Some("java") | Some("amt") | Some("amtsol") | Some("ard") => "BOBCAT_PASS",
         _ => "BOBCAT_VNC_PASS",
     };
     std::env::var(var).unwrap_or_default()
@@ -965,6 +1104,30 @@ fn connect_amt(app: AppHandle, state: State<Session>, ip: String, user: String, 
     });
 }
 
+/// Apple Remote Desktop (macOS Screen Sharing / Remote Management): log in with Apple's ARD
+/// authentication (`ard.rs`), bridge the Mac's RFB stream to a local port and show it in the VNC
+/// canvas. The bridge serves one viewer, so there are no retries.
+#[tauri::command]
+fn connect_ard(app: AppHandle, state: State<Session>, ip: String, port: u16, user: String, pass: String, remember: bool) {
+    disconnect(state.clone());
+    let (tx, rx) = channel();
+    *state.0.lock().unwrap() = Some(tx);
+    thread::spawn(move || {
+        status(&app, format!("connecting to the Mac at {ip}:{port}..."));
+        let local = match ard::bridge(&ip, port, &user, &pass) {
+            Ok(p) => p,
+            Err(e) => return status(&app, format!("error: {e}")),
+        };
+        if remember {
+            keychain::remember(&user, &ip, &pass);
+        }
+        match run(&app, "127.0.0.1", local, false, "", false, &rx) {
+            Ok(()) => status(&app, "disconnected"),
+            Err(e) => status(&app, format!("error: {e}")),
+        }
+    });
+}
+
 #[tauri::command]
 fn disconnect(state: State<Session>) {
     if let Some(tx) = state.0.lock().unwrap().take() {
@@ -1128,7 +1291,60 @@ fn main() {
                 shutdown(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, connect, connect_amt, amt_control::amt_status, amt_control::amt_power, amt_control::amt_boot, amt_control::amt_ider_enable, amt_control::amt_boot_iso, amt_media::pick_iso, amt_media::ider_mount, amt_media::ider_unmount, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
+        .invoke_handler(tauri::generate_handler![view_cert, trust_cert, default_password, saved_password, forget_password, default_protocol, default_user, default_ip, clipboard_text, set_clipboard, connect_text, term_input, term_resize, default_tls, autoconnect, set_frame_channel, connect, connect_amt, connect_ard, amt_control::amt_status, amt_control::amt_power, amt_control::amt_boot, amt_control::amt_ider_enable, amt_control::amt_boot_iso, amt_media::pick_iso, amt_media::ider_mount, amt_media::ider_unmount, disconnect, html5::connect_html5, html5::disconnect_html5, java_console::connect_java, java_console::disconnect_java, java_console::java_paste, java_console::java_copy_text, java_console::download_java_runtime, html5::html5_layout, html5_tools::html5_paste, html5_tools::html5_copy_text, html5_tools::html5_zoom, send_key, send_pointer, paste_clipboard, copy_region_text, fit_window])
         .run(tauri::generate_context!())
         .expect("error running bobcat");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fmt(bpp: u8, big_endian: bool, max: (u16, u16, u16), shifts: (u8, u8, u8)) -> PixelFormat {
+        PixelFormat {
+            bits_per_pixel: bpp,
+            depth: 24,
+            big_endian,
+            true_colour: true,
+            red_max: max.0,
+            green_max: max.1,
+            blue_max: max.2,
+            red_shift: shifts.0,
+            green_shift: shifts.1,
+            blue_shift: shifts.2,
+        }
+    }
+
+    /// The fast path (little-endian B,G,R,X) must give the same pixels as the general conversion.
+    #[test]
+    fn bgrx_fast_path_matches_the_general_one() {
+        let px: Vec<u8> = (0..4000u32).map(|i| (i * 37 % 251) as u8).collect();
+        let mut fast = Vec::new();
+        rgba_into(&fmt(32, false, (255, 255, 255), (16, 8, 0)), &px, &mut fast);
+        // expected by hand: B,G,R,X in, R,G,B,255 out
+        let mut want = Vec::new();
+        for p in px.chunks_exact(4) {
+            want.extend_from_slice(&[p[2], p[1], p[0], 255]);
+        }
+        assert_eq!(fast, want);
+    }
+
+    #[test]
+    fn rgb565_still_uses_the_general_path() {
+        // one pixel, little-endian 16 bit: red 31, green 63, blue 31 = white
+        let mut out = Vec::new();
+        rgba_into(&fmt(16, false, (31, 63, 31), (11, 5, 0)), &[0xff, 0xff], &mut out);
+        assert_eq!(out, [255, 255, 255, 255]);
+        // pure red
+        let mut out = Vec::new();
+        rgba_into(&fmt(16, false, (31, 63, 31), (11, 5, 0)), &[0x00, 0xf8], &mut out);
+        assert_eq!(out, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rgba_into_appends() {
+        let mut out = vec![9u8, 9];
+        rgba_into(&fmt(32, false, (255, 255, 255), (16, 8, 0)), &[1, 2, 3, 0], &mut out);
+        assert_eq!(out, [9, 9, 3, 2, 1, 255]);
+    }
 }

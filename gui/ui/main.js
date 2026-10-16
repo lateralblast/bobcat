@@ -5,20 +5,45 @@ const ctx = cv.getContext('2d');
 // Remote framebuffer at native size; `cv` shows it scaled with a high-quality resampler.
 const fb = document.createElement('canvas');
 const fbctx = fb.getContext('2d');
-let dirty = false;
-function redraw() {
-  if (dirty) return;
-  dirty = true;
+// Redraws are batched into one per animation frame. With no argument the whole picture is drawn
+// (zoom, resize); with a rectangle (frame pixels) only that part, which is much cheaper on a big screen.
+let drawQueued = false, drawAll = false, drawBox = null;
+function redraw(box) {
+  if (!box) drawAll = true;
+  else if (!drawAll) {
+    drawBox = drawBox
+      ? { x0: Math.min(drawBox.x0, box.x0), y0: Math.min(drawBox.y0, box.y0), x1: Math.max(drawBox.x1, box.x1), y1: Math.max(drawBox.y1, box.y1) }
+      : box;
+  }
+  if (drawQueued) return;
+  drawQueued = true;
   requestAnimationFrame(() => {
-    dirty = false;
+    drawQueued = false;
     const z = zoomFactor();
     const sharp = Number.isInteger(z) && z >= 1; // whole multiples: keep pixels crisp
     ctx.imageSmoothingEnabled = !sharp;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(fb, 0, 0, cv.width, cv.height);
+    const b = drawAll ? null : drawBox;
+    drawAll = false;
+    drawBox = null;
+    if (!b || !fb.width || !fb.height) {
+      ctx.drawImage(fb, 0, 0, cv.width, cv.height);
+      return;
+    }
+    // the changed part in canvas pixels, widened by 2 frame pixels (the resampler looks around a
+    // pixel) and rounded out to whole canvas pixels so neighbouring draws meet without seams
+    const sx = cv.width / fb.width, sy = cv.height / fb.height, pad = 2;
+    const x0 = Math.max(0, b.x0 - pad), y0 = Math.max(0, b.y0 - pad);
+    const x1 = Math.min(fb.width, b.x1 + pad), y1 = Math.min(fb.height, b.y1 + pad);
+    const dx0 = Math.floor(x0 * sx), dy0 = Math.floor(y0 * sy);
+    const dx1 = Math.min(cv.width, Math.ceil(x1 * sx)), dy1 = Math.min(cv.height, Math.ceil(y1 * sy));
+    if (dx1 <= dx0 || dy1 <= dy0) return;
+    ctx.drawImage(fb, dx0 / sx, dy0 / sy, (dx1 - dx0) / sx, (dy1 - dy0) / sy, dx0, dy0, dx1 - dx0, dy1 - dy0);
   });
 }
 const $ = (id) => document.getElementById(id);
+// protocols drawn on the canvas (the remote framebuffer): they share zoom, paste, copy and the on-screen keyboard
+const isCanvas = (p) => p === 'vnc' || p === 'amt' || p === 'ard';
 
 invoke('default_tls').then((t) => { $('tls').checked = t; });
 invoke('default_user').then((u) => { $('user').value = u; });
@@ -65,6 +90,8 @@ $('go').onclick = () => {
     invoke('connect_html5', { ip: $('ip').value, user: $('user').value, pass: $('pass').value, remember });
   } else if (proto === 'amt') {
     invoke('connect_amt', { ip: $('ip').value, user: $('user').value || 'admin', pass: $('pass').value, remember });
+  } else if (proto === 'ard') {
+    invoke('connect_ard', { ip: $('ip').value, port: Number($('port').value), user: $('user').value, pass: $('pass').value, remember });
   } else if (proto === 'vnc') {
     invoke('connect', { ip: $('ip').value, port: Number($('port').value), tls: $('tls').checked, pass: $('pass').value, remember });
   } else {
@@ -123,29 +150,62 @@ function fitWindow() {
 $('zoom').onchange = () => {
   try { localStorage.setItem('bobcat.zoom', $('zoom').value); } catch (_) {}
   if ($('proto').value === 'html5') { invoke('html5_zoom', { factor: $('zoom').value === 'fit' ? 1 : Number($('zoom').value) }); return; }
-  if ($('proto').value !== 'vnc') { applyTermFont(); return; }
+  if (!isCanvas($('proto').value)) { applyTermFont(); return; }
   applyZoom();
   if ($('zoom').value !== 'fit') fitWindow();
 };
 window.addEventListener('resize', () => {
   reportLayout();
-  if ($('proto').value !== 'vnc') { if (fit) fit.fit(); return; }
+  if (!isCanvas($('proto').value)) { if (fit) fit.fit(); return; }
   if ($('zoom').value === 'fit') applyZoom();
 });
 
-listen('vnc-resize', (e) => {
-  fb.width = e.payload.w;
-  fb.height = e.payload.h;
+function screenResized(w, h) {
+  fb.width = w;
+  fb.height = h;
   applyZoom();
   if ($('zoom').value !== 'fit') fitWindow();
-});
+}
+fbctx.imageSmoothingEnabled = false; // copies inside the picture must be exact
+function copyRect(sx, sy, dx, dy, w, h) {
+  fbctx.drawImage(fb, sx, sy, w, h, dx, dy, w, h); // the server scrolled or moved something
+  redraw({ x0: dx, y0: dy, x1: dx + w, y1: dy + h });
+}
+function putRect(x, y, w, h, px) {
+  fbctx.putImageData(new ImageData(px, w, h), x, y);
+  redraw({ x0: x, y0: y, x1: x + w, y1: y + h });
+}
+// The picture arrives as raw bytes on a channel (kind 0: rectangle x, y, w, h + RGBA pixels;
+// kind 1: screen size w, h; kind 2: copy sx, sy, dx, dy, w, h inside the picture; little-endian u16s), which avoids base64 and JSON for big screens.
+const frameChannel = new window.__TAURI__.core.Channel();
+frameChannel.onmessage = (msg) => {
+  let buf = msg;
+  if (Array.isArray(buf)) buf = new Uint8Array(buf).buffer;
+  else if (ArrayBuffer.isView(buf)) buf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  const dv = new DataView(buf);
+  const u16 = (at) => dv.getUint16(at, true);
+  // one message holds all of a server update: messages one after another
+  for (let o = 0; o < buf.byteLength;) {
+    const kind = dv.getUint8(o);
+    if (kind === 1) { screenResized(u16(o + 1), u16(o + 3)); o += 5; }
+    else if (kind === 2) { copyRect(u16(o + 1), u16(o + 3), u16(o + 5), u16(o + 7), u16(o + 9), u16(o + 11)); o += 13; }
+    else if (kind === 0) {
+      const x = u16(o + 1), y = u16(o + 3), w = u16(o + 5), h = u16(o + 7);
+      putRect(x, y, w, h, new Uint8ClampedArray(buf, o + 9, w * h * 4));
+      o += 9 + w * h * 4;
+    } else break; // not a message this knows
+  }
+};
+invoke('set_frame_channel', { channel: frameChannel });
+// the same through events, used only if the channel was not set (older backend)
+listen('vnc-resize', (e) => screenResized(e.payload.w, e.payload.h));
+listen('vnc-copy', (e) => copyRect(...e.payload));
 listen('vnc-frame', (e) => {
   const { x, y, w, h, data } = e.payload;
   const bin = atob(data);
   const px = new Uint8ClampedArray(bin.length);
   for (let i = 0; i < bin.length; i++) px[i] = bin.charCodeAt(i);
-  fbctx.putImageData(new ImageData(px, w, h), x, y);
-  redraw();
+  putRect(x, y, w, h, px);
 });
 
 // ---- input -------------------------------------------------------------
@@ -193,7 +253,7 @@ async function paste() {
     }
     return;
   }
-  if ($('proto').value !== 'vnc') {
+  if (!isCanvas($('proto').value)) {
     try {
       const text = await invoke('clipboard_text');
       term.paste(text); // handles bracketed paste mode
@@ -215,7 +275,7 @@ async function paste() {
     $('status').textContent = `paste failed: ${err}`;
   }
 }
-$('paste').onclick = () => { paste(); const p = $('proto').value; if (p === 'vnc') cv.focus(); else if (p !== 'html5') term.focus(); };
+$('paste').onclick = () => { paste(); const p = $('proto').value; if (isCanvas(p)) cv.focus(); else if (p !== 'html5') term.focus(); };
 
 cv.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') { e.preventDefault(); paste(); return; }
@@ -248,9 +308,25 @@ function pos(e) {
 // JS: 1 left, 2 right, 4 middle  ->  RFB: 1 left, 2 middle, 4 right
 const rfbButtons = (b) => (b & 1) | ((b & 4) ? 2 : 0) | ((b & 2) ? 4 : 0);
 const pointer = (e, extra = 0) => {
+  moveWaiting = null; // this event carries the newest position
   const { x, y } = pos(e);
   return invoke('send_pointer', { buttons: buttons | extra, x, y });
 };
+// Mouse moves are sent at most once per animation frame, with the newest position. A mouse reports
+// hundreds of moves a second, and each one used to be its own call: dragging a window then queued
+// up far more moves than the Mac could draw and it kept replaying them after the mouse stopped.
+let moveWaiting = null, moveQueued = false;
+function pointerMove(e) {
+  moveWaiting = { buttons, ...pos(e) };
+  if (moveQueued) return;
+  moveQueued = true;
+  requestAnimationFrame(() => {
+    moveQueued = false;
+    const m = moveWaiting;
+    moveWaiting = null;
+    if (m) invoke('send_pointer', m);
+  });
+}
 
 let copyMode = false;
 let selStart = null;
@@ -265,7 +341,7 @@ function setCopyMode(on) {
 }
 $('copy').onclick = async () => {
   const p = $('proto').value;
-  if (p === 'vnc') { setCopyMode(!copyMode); return; }
+  if (isCanvas(p)) { setCopyMode(!copyMode); return; }
   if (p === 'java') {
     $('status').textContent = 'reading the Java console screen...';
     try {
@@ -363,10 +439,12 @@ window.addEventListener('mouseup', (e) => {
 window.addEventListener('keydown', (e) => { if (copyMode && e.key === 'Escape') setCopyMode(false); });
 
 cv.addEventListener('mousemove', (e) => {
-  if (copyMode) return; buttons = rfbButtons(e.buttons); pointer(e); });
+  if (copyMode) return; buttons = rfbButtons(e.buttons); pointerMove(e); });
 cv.addEventListener('mousedown', (e) => { if (copyMode) return; cv.focus(); buttons = rfbButtons(e.buttons); pointer(e); });
 cv.addEventListener('mouseup', (e) => { if (copyMode) return; buttons = rfbButtons(e.buttons); pointer(e); });
 cv.addEventListener('contextmenu', (e) => e.preventDefault());
+// The wheel is a button press and release (RFB buttons 4 and 5) per wheel event. (Adding the wheel
+// movement up and sending a step per 80 pixels made scrolling worse, so it is one step per event.)
 cv.addEventListener('wheel', (e) => {
   e.preventDefault();
   const bit = e.deltaY < 0 ? 8 : 16;
@@ -455,14 +533,16 @@ listen('term-data', (e) => {
   term.write(bytes);
 });
 
+let prevProto = null;
 // show only the controls that apply to the chosen protocol
 function setProto() {
   const proto = $('proto').value;
-  const kind = proto === 'vnc' || proto === 'amt' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
+  const kind = proto === 'vnc' || proto === 'amt' || proto === 'ard' ? 'vnc' : proto === 'html5' ? 'html5' : proto === 'java' ? 'java' : 'text';
   const hide = (sel, yes) => document.querySelectorAll(sel).forEach((el) => el.classList.toggle('hidden', yes));
   hide('.vnc-only', kind !== 'vnc');
   hide('.amt-only', proto !== 'amt' && proto !== 'amtsol'); // virtual media (IDE-R) of an AMT machine
-  hide('.vnc-net', proto !== 'vnc');           // port and TLS are for the iDRAC's VNC server
+  hide('.vnc-net', proto !== 'vnc' && proto !== 'ard'); // port (and TLS) of a VNC server: the iDRAC's, or a Mac's
+  hide('.vnc-tls', proto !== 'vnc');           // TLS is only for the iDRAC's VNC server
   hide('.login-only', proto === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
   hide('.layout-sel', kind === 'java' || kind === 'text'); // the keyboard layout pasting follows
@@ -472,9 +552,14 @@ function setProto() {
   $('term').classList.toggle('hidden', kind !== 'text');
   $('html5note').classList.toggle('hidden', kind !== 'html5');
   $('javanote').classList.toggle('hidden', kind !== 'java');
-  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' || proto === 'amtsol' ? 'AMT password' : 'iDRAC password';
+  $('pass').placeholder = proto === 'vnc' ? 'VNC password' : proto === 'amt' || proto === 'amtsol' ? 'AMT password' : proto === 'ard' ? 'Mac password' : 'iDRAC password';
+  $('user').placeholder = proto === 'ard' ? 'Mac user name' : 'iDRAC / AMT user';
+  // a Mac listens on 5900, the iDRAC's VNC server on 5901: the port follows ARD in and out, but only while it still holds the other default
+  if (proto === 'ard' && prevProto !== 'ard' && $('port').value === '5901') $('port').value = '5900';
+  if (proto !== 'ard' && prevProto === 'ard' && $('port').value === '5900') $('port').value = '5901';
+  prevProto = proto;
   // the Certificate button shows the TLS certificate (VNC, HTML5) or SSH host key; SOL has neither
-  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java');
+  $('certbtn').classList.toggle('hidden', proto === 'sol' || proto === 'java' || proto === 'ard');
   $('certbtn').textContent = proto === 'ssh' ? 'Host key' : 'Certificate';
   if (kind === 'text') { ensureTerm(); fit.fit(); }
   reportLayout();

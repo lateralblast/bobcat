@@ -68,6 +68,7 @@ Status: [ ] open, [~] in progress, [x] done
     - [ ] `--amt-redir-test SOL|IDER|KVMR` only uses the plain port
     - [ ] `BOBCAT_DEBUG=1` with `--console sol`: the trace shares the raw terminal and disconnecting was awkward once (not investigated)
     - [ ] the first test device (192.168.10.69, black picture, dropped on any input) is no longer available to compare
+- [~] GUI: ARD (Apple Remote Desktop) protocol (1.9.6, `ard.rs`: Apple's security type 30 login plus a local bridge; works against a real Mac: login, picture, scaling and scrolling confirmed; redraws were sped up (raw-byte channel, batching per update, dirty-rect redraw, CopyRect, TCP_NODELAY). Still to do: Command/Option key mapping, clipboard, the Mac's security types 33/35/36 and the VNC-password type 2, a CLI `--ard`, faster ZRLE decoding if it is still slow)
 - [ ] A `--console html5` for the CLI
 - [x] GUI: HTML5 embedded view on macOS (1.3.0; frame-based layout between the toolbar and status bar; needs more testing)
 - [ ] GUI: HTML5 embedded view on Windows (other platforms still use the separate window)
@@ -80,7 +81,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [~] build.sh: install-test the deb and rpm (1.8.6: the deb installs on Ubuntu 24.04 and the rpm on Fedora 42 in containers with no missing libraries; the GUI was not started there; still to do: build the rpm on an RPM distribution)
 - [x] `build.sh --target deb` / `--package deb|rpm|appimage|all` (1.4.7; deb builds on Linux, install not tried)
 - [ ] Windows: console modes (`bobcat-cli --console vnc|sol|ssh`) are refused for now; port the raw terminal, `poll` and terminal size code (crossterm or the Windows console API) and ipmitool use; the GUI on Windows is untested
-- [~] build.sh: Windows installer built in a Windows 11 VM on Linux (1.9.5, `windows/vm.py`, from cheetoh; written, VM not started yet; the Rust code has not been compiled for Windows, so expect fixes; the installer has not been run on Windows)
+- [~] build.sh: Windows installer and CLI built in a Windows 11 VM on Linux (1.9.5, `windows/vm.py`, from cheetoh; the build works and gives `bobcat_1.9.5_x64-setup.exe` and `bobcat-cli-1.9.5-windows.exe`; neither has been run on Windows; the VM's build watcher does not restart by itself, see CLAUDE.md)
 - [ ] build.sh: test `--target windows` (`--target linux` builds the distribution's package on Ubuntu, 1.5.2), `--arch universal`/`x64` on mac, code signing and notarization for macOS (needs an Apple developer ID), and the Windows embedded console
 - [x] `build.sh --delete-release [<version>]` (1.4.9; untried against GitHub, `--dry-run` first)
 - [x] `build.sh --release`: tag, push and GitHub release with the installers (1.4.6; only `--dry-run` tried)
