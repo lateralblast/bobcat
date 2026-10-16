@@ -1,11 +1,11 @@
 // bobcat: Bobcat's own paste, copy and zoom controls for the embedded HTML5 console
-// Version: 1.1.9
+// Version: 2.0.1
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 //
-// The console is Dell's web page in a web view, so these work from the outside:
+// The console is Dell's (or HPE iLO's) web page in a web view, so these work from the outside:
 //  - zoom:  the web view's zoom factor
 //  - paste: key events dispatched on the page's window (Dell's viewer listens for keydown /
-//           keypress / keyup there and maps them to USB keys)
+//           keypress / keyup there and maps them to USB keys) or on the iLO's canvas `rc_video`
 //  - copy:  a WebKit snapshot of the console, cropped to the page's canvas and read with tesseract
 
 use std::sync::mpsc;
@@ -42,7 +42,9 @@ fn paste_script(text: &str, keys: Option<&[PasteKey]>) -> String {
     const e = new KeyboardEvent(type, {{ key: o.key, code: o.code, bubbles: true, cancelable: true, shiftKey: !!o.shift }});
     Object.defineProperty(e, 'keyCode', {{ get: () => o.keyCode }});
     Object.defineProperty(e, 'which', {{ get: () => o.keyCode }});
-    window.dispatchEvent(e);
+    // iLO's page binds its key handler on the console canvas for good (on the document only while
+    // the pointer is over it, and it stops the event there, so nothing is typed twice); Dell's on the window
+    (document.getElementById('rc_video') || window).dispatchEvent(e);
   }}
   const SHIFT = {{ key: 'Shift', code: 'ShiftLeft', keyCode: 16, shift: true }};
   // keys (worked out for the selected keyboard layout) or the US layout

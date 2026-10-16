@@ -1,6 +1,6 @@
 [package]
 name = "bobcat"
-version = "2.0.0"
+version = "2.0.2"
 edition = "2021"
 license = "CC-BY-NC-SA-4.0"
 

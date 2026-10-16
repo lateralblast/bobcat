@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 2.0.0
+Version: 2.0.2
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -110,7 +110,7 @@ BOBCAT_VNC_PASS='<vnc password>' cargo run
 Requires the Tauri 2 Linux dependencies (WebKitGTK 4.1). No Node/npm needed. Enter the iDRAC IP and password
 (prefilled from `BOBCAT_VNC_PASS`) and click Connect.
 
-Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (the BMC's own web console: Dell iDRAC, or HP iLO, which bobcat recognises by itself; iLO needs an Advanced licence and is not tried in the app yet), **Java** (Dell's Java console, in a window of its own), **AMT SOL** (the serial console of an Intel AMT device, no ipmitool needed), **AMT** (the KVM of an Intel AMT device, drawn in the canvas like VNC: host, user `admin` and the AMT password; no port or TLS setting), **ARD** (a Mac's Screen Sharing / Remote Management, drawn in the canvas like VNC: host, port 5900, the Mac user name and password; Apple's own login is done by bobcat and the picture then goes through a local bridge; not tried against a Mac yet), **RDP** (Windows Remote Desktop, drawn in the canvas: host, port 3389, Windows user name and password, NLA login with a local account; keyboard, mouse, picture and a text clipboard; with Fit window the desktop follows the window size; no sound), **SSH**
+Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (the BMC's own web console: Dell iDRAC, or HP iLO, which bobcat recognises by itself; iLO needs an Advanced licence and is not tried in the app yet), **Java** (Dell's, or HP iLO 4's, Java console, in a window of its own), **AMT SOL** (the serial console of an Intel AMT device, no ipmitool needed), **AMT** (the KVM of an Intel AMT device, drawn in the canvas like VNC: host, user `admin` and the AMT password; no port or TLS setting), **ARD** (a Mac's Screen Sharing / Remote Management, drawn in the canvas like VNC: host, port 5900, the Mac user name and password; Apple's own login is done by bobcat and the picture then goes through a local bridge; not tried against a Mac yet), **RDP** (Windows Remote Desktop, drawn in the canvas: host, port 3389, Windows user name and password, NLA login with a local account; keyboard, mouse, picture and a text clipboard; with Fit window the desktop follows the window size; no sound), **SSH**
 (the iDRAC's `console com2`) or **SOL** (IPMI Serial over LAN via `ipmitool`). HTML5, Java, SSH and SOL need the iDRAC username
 and password; SSH and SOL show a terminal.
 `BOBCAT_PROTOCOL=vnc|html5|java|amt|ssh|sol|amtsol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL, HTML5 and Java, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
@@ -122,7 +122,7 @@ and password; SSH and SOL show a terminal.
   The console is Dell's own page, so its keyboard, mouse and menus are Dell's. Bobcat's **Copy** (reads the
   screen with OCR; needs `tesseract-ocr`), **Paste** (types your clipboard in, US layout) and **text size**
   (zoom) buttons work on it and sit on the second toolbar row beside Certificate; the on-screen keyboard is not used.
-- **Java** (macOS and 64-bit Linux): logs in, downloads Dell's viewer from the iDRAC over the pinned connection (once; later sessions reuse the copy in `~/.config/bobcat/java-viewer/<ip>/` unless the iDRAC's files changed) and
+- **Java** (macOS and 64-bit Linux; also an HP iLO 4, whose applet is run by a small host program, see CHANGELOG 2.0.2): logs in, downloads Dell's viewer from the iDRAC over the pinned connection (once; later sessions reuse the copy in `~/.config/bobcat/java-viewer/<ip>/` unless the iDRAC's files changed) and
   runs it with `java`, in a window of its own (it cannot be embedded; on macOS, with the Accessibility permission, bobcat docks that window over the console area of the main window and keeps it there as the window moves or is resized, and its **Paste** (types your clipboard in as key presses) and **Copy** (reads the screen with OCR; needs the Screen Recording permission) buttons work; `BOBCAT_JAVA_DOCK=0` turns this off). The Java viewer must be selected on the iDRAC
   (`bobcat-cli --enable java`). On macOS the viewer's native libraries are Intel-only, so it needs an x86_64 Java 8:
   the first time, bobcat asks and then downloads Azul Zulu 8 into `~/.config/bobcat/java` (checksum checked, nothing

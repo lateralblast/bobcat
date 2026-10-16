@@ -5,8 +5,12 @@
 // the jars are downloaded over the pinned connection and `java` is started on them directly.
 // See RESEARCH.md ("Java console") for why the runtime, the patched library path and the TLS
 // settings below are needed.
+//
+// An HPE iLO 4 is also handled here (2.0.2, `open_ilo`): its Java console is an applet, run by the
+// small host in `java/IloHost.java` (see RESEARCH.md, "iLO 4 Java console").
 
 use crate::html5::{self, request, WebSession};
+use crate::ilo::{self, Vendor};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -305,7 +309,11 @@ fn set_viewer_cert_store(_store: &Path) -> Result<(), String> {
 fn download_jar(ip: &str, session: &WebSession, path: &str, dir: &Path) -> Result<(String, bool), String> {
     let name = path.rsplit('/').next().unwrap_or(path).to_string();
     let (file, tag_file) = (dir.join(&name), dir.join(format!("{name}.etag")));
-    let mut headers = vec![("Cookie", session.cookie.clone()), ("ST2", session.st2.clone())];
+    let mut headers = vec![("Cookie", session.cookie.clone())];
+    if !session.st2.is_empty() {
+        headers.push(("ST2", session.st2.clone()));
+    }
+    let base_len = headers.len();
     if file.is_file() {
         if let Ok(etag) = std::fs::read_to_string(&tag_file) {
             if !etag.trim().is_empty() {
@@ -313,7 +321,7 @@ fn download_jar(ip: &str, session: &WebSession, path: &str, dir: &Path) -> Resul
             }
         }
     }
-    let cached_try = headers.len() > 2;
+    let cached_try = headers.len() > base_len;
     let r = request(ip, "GET", path, &headers, None)?;
     if r.status == 304 && cached_try {
         return Ok((name, false));
@@ -342,6 +350,9 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
         }
         return Err("no Java runtime found: install Java 8 or later, or set BOBCAT_JAVA to the java binary".into());
     };
+    if ilo::detect(ip)? == Vendor::Hpe {
+        return open_ilo(app, ip, user, pass, remember, &java);
+    }
     crate::status(app, format!("logging in to {ip} (the iDRAC takes ~5s)..."));
     let console = html5::login_as(ip, user, pass, "1").map_err(|e| {
         html5::logout_all();
@@ -354,6 +365,106 @@ fn open(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool) -> Re
         crate::keychain::remember(user, ip, pass);
     }
     result
+}
+
+/// An HPE iLO 4: log in, take the applet's jar and parameters from the iLO's own JNLP template, and
+/// run the applet in `IloHost` (embedded jar). The session key goes to the host on stdin.
+fn open_ilo(app: &AppHandle, ip: &str, user: &str, pass: &str, remember: bool, java: &Path) -> Result<(), String> {
+    crate::status(app, format!("logging in to the iLO at {ip}..."));
+    let console = ilo::login(ip, user, pass).map_err(|e| {
+        html5::logout_all();
+        e
+    })?;
+    let result = launch_ilo(app, ip, &console, java);
+    if result.is_err() {
+        html5::logout_all();
+    } else if remember {
+        crate::keychain::remember(user, ip, pass);
+    }
+    result
+}
+
+/// `<param name="X" value="Y">` pairs of the iLO's JNLP template, with the session key and language filled in.
+fn ilo_params(template: &str, key: &str) -> Vec<(String, String)> {
+    // fill the placeholders first: they contain a `>` that would end a tag early
+    let template = template.replace("<%= this.sessionKey %>", key).replace("<%= this.langId %>", "en");
+    let mut out = Vec::new();
+    for tag in template.split("<param").skip(1) {
+        let tag = tag.split('>').next().unwrap_or("");
+        let (Some(name), Some(value)) = (attr(tag, "name"), attr(tag, "value")) else { continue };
+        out.push((name.to_string(), value.to_string()));
+    }
+    out
+}
+
+/// Path on the iLO (`/html/intgapp4_232.jar`) of the applet's jar named in the template.
+fn ilo_jar_path(template: &str) -> Option<String> {
+    let end = template.find(".jar")? + 4;
+    let start = template[..end].rfind("html/")?;
+    let path = &template[start..end];
+    let ok = path.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'));
+    ok.then(|| format!("/{path}"))
+}
+
+fn launch_ilo(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> Result<(), String> {
+    let key = console.session.cookie.split_once('=').map(|(_, v)| v.to_string()).unwrap_or_default();
+    let auth = [("Cookie", console.session.cookie.clone()), ("X-Auth-Token", key.clone())];
+    let r = request(ip, "GET", "/html/jnlp_template.html", &auth, None)?;
+    if r.status != 200 {
+        return Err(format!("the iLO gave no Java launch template (HTTP {})", r.status));
+    }
+    let template = r.text();
+    let jar = ilo_jar_path(&template).ok_or("the iLO's launch template names no applet jar")?;
+    let params = ilo_params(&template, &key);
+    if !params.iter().any(|(n, _)| n == "RCINFO1") {
+        return Err("the iLO's launch template has no session parameter".into());
+    }
+
+    let dir = viewer_dir(ip);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    crate::status(app, "checking the Java console files...");
+    let (jar_name, fresh) = download_jar(ip, &console.session, &jar, &dir)?;
+    let host_jar = dir.join("ilohost.jar");
+    const HOST: &[u8] = include_bytes!("../java/ilohost.jar");
+    if std::fs::read(&host_jar).ok().as_deref() != Some(HOST) {
+        std::fs::write(&host_jar, HOST).map_err(|e| e.to_string())?;
+    }
+    if html5::debug_on() {
+        eprintln!("[bobcat] iLO Java console: applet jar {jar_name} {}", if fresh { "downloaded" } else { "from the cache" });
+    }
+
+    // the applet's connections are pinned by the certificate's SHA-256 fingerprint
+    let pem = html5::pinned_peer_pem(ip).ok_or("no pinned certificate for this iLO")?;
+    let cert = openssl::x509::X509::from_pem(&pem).map_err(|e| e.to_string())?;
+    let digest = cert.digest(openssl::hash::MessageDigest::sha256()).map_err(|e| e.to_string())?;
+    let fingerprint: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+
+    let log = std::fs::File::create(dir.join("viewer.log")).map_err(|e| e.to_string())?;
+    let log2 = log.try_clone().map_err(|e| e.to_string())?;
+    let mut child = Command::new(java)
+        .current_dir(&dir)
+        .arg("-cp")
+        .arg(format!("{jar_name}:ilohost.jar"))
+        .arg("IloHost")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log2))
+        .spawn()
+        .map_err(|e| format!("could not start {}: {e}", java.display()))?;
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().ok_or("no input pipe to the Java host")?;
+        let mut text = format!("{ip}\n{fingerprint}\n");
+        for (n, v) in &params {
+            text.push_str(&format!("{n}={v}\n"));
+        }
+        stdin.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    if html5::debug_on() {
+        eprintln!("[bobcat] iLO Java console started (log: {})", dir.join("viewer.log").display());
+    }
+    watch(app, ip, &console.session, child);
+    Ok(())
 }
 
 fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> Result<(), String> {
@@ -411,7 +522,7 @@ fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> R
 
     let log = std::fs::File::create(dir.join("viewer.log")).map_err(|e| e.to_string())?;
     let log2 = log.try_clone().map_err(|e| e.to_string())?;
-    let mut child = Command::new(java)
+    let child = Command::new(java)
         .current_dir(&dir)
         .arg(format!("-Djava.library.path={}", dir.display()))
         // the iDRAC closes the console connection during the handshake of a current Java client
@@ -426,10 +537,17 @@ fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> R
         .stderr(Stdio::from(log2))
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", java.display()))?;
+    watch(app, ip, &console.session, child);
+    Ok(())
+}
+
+/// The viewer is running: remember it, keep the web session alive, dock its window under the
+/// toolbar and clean up (log out) when it ends.
+fn watch(app: &AppHandle, ip: &str, session: &WebSession, mut child: std::process::Child) {
     *VIEWER_PID.lock().unwrap() = Some(child.id());
-    html5::keep_alive(console.session.clone());
+    html5::keep_alive(session.clone());
     if html5::debug_on() {
-        eprintln!("[bobcat] Java viewer started (log: {})", dir.join("viewer.log").display());
+        eprintln!("[bobcat] Java viewer started (log: {})", viewer_dir(ip).join("viewer.log").display());
     }
     #[cfg(target_os = "macos")]
     {
@@ -456,7 +574,6 @@ fn launch(app: &AppHandle, ip: &str, console: &html5::Console, java: &Path) -> R
             crate::status(&app, "Java console closed");
         }
     });
-    Ok(())
 }
 
 /// Make a screen capture easier for tesseract: grayscale, text dark on light (a light-on-dark
