@@ -1,5 +1,5 @@
 // bobcat: host for HPE iLO 4 Java console applet (com.hp.ilo2.intgapp.intgapp)
-// Version: 2.0.4
+// Version: 2.0.5
 // License: CC BY-NC-SA 4.0 (see LICENSE.md)
 //
 // The iLO serves its Java console as an applet; Web Start is gone from current Java, so this

@@ -120,3 +120,54 @@ pub(crate) fn ping(s: &WebSession) {
     let key = s.cookie.split_once('=').map(|(_, v)| v).unwrap_or("");
     let _ = request(&s.ip, "GET", "/json/session_info", &auth(key), None);
 }
+
+/// The iLO's open sessions (Redfish `SessionService/Sessions` with a short-lived login of our own,
+/// which shows in the list as "this one"): one line per session with user, kind, address and login time.
+pub(crate) fn session_list(ip: &str, user: &str, pass: &str) -> Result<Vec<String>, String> {
+    let body = format!(r#"{{"method":"login","user_login":{},"password":{}}}"#, json_string(user), json_string(pass));
+    let r = request(ip, "POST", "/json/login_session", &[], Some(&body))?;
+    let v: serde_json::Value = serde_json::from_str(&r.text()).unwrap_or_default();
+    if r.status != 200 {
+        return Err(format!("login failed: HTTP {} {}", r.status, v.get("message").and_then(|m| m.as_str()).unwrap_or("")));
+    }
+    let key = v.get("session_key").and_then(|k| k.as_str()).filter(|k| !k.is_empty()).ok_or("the iLO login gave no session key")?.to_string();
+    let result = (|| {
+        let get = |path: &str| -> Result<serde_json::Value, String> {
+            let r = request(ip, "GET", path, &auth(&key), None)?;
+            if r.status != 200 {
+                return Err(format!("{path}: HTTP {}", r.status));
+            }
+            serde_json::from_str(&r.text()).map_err(|e| format!("{path}: {e}"))
+        };
+        let list = get("/redfish/v1/SessionService/Sessions/")?;
+        if debug_on() {
+            eprintln!("[bobcat] ilo: sessions {list}");
+        }
+        // iLO 4 firmware differs: the members are links, or full objects (`Members` / `Items`)
+        let members = list.get("Members").or_else(|| list.get("Items")).and_then(|m| m.as_array()).cloned().unwrap_or_default();
+        let mut lines = Vec::new();
+        for m in members {
+            let s = if m.get("UserName").is_some() {
+                m
+            } else if let Some(link) = m.get("@odata.id").or_else(|| m.pointer("/links/self/href")).and_then(|l| l.as_str()) {
+                get(link)?
+            } else {
+                continue;
+            };
+            let hp = s.pointer("/Oem/Hp").or_else(|| s.pointer("/Oem/Hpe")).cloned().unwrap_or_default();
+            let text = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let mut parts = vec![text(&s, "UserName")];
+            for (v, k) in [(&hp, "UserTag"), (&hp, "UserIP"), (&s, "LoginTime"), (&hp, "LoginTime")] {
+                let t = text(v, k);
+                if !t.is_empty() && !parts.contains(&t) {
+                    parts.push(t);
+                }
+            }
+            let mine = hp.get("MySession").and_then(|b| b.as_bool()).unwrap_or(false);
+            lines.push(format!("{}{}", parts.join(" "), if mine { " (this query)" } else { "" }));
+        }
+        Ok(lines)
+    })();
+    let _ = request(ip, "POST", "/json/login_session", &auth(&key), Some(&format!(r#"{{"method":"logout","session_key":{}}}"#, json_string(&key))));
+    result
+}

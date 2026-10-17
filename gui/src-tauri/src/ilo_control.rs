@@ -126,12 +126,13 @@ pub fn ilo_status(app: AppHandle, ip: String, user: String, pass: String) {
             Ok::<_, String>((power, ipmi))
         })();
         cli.close();
-        let (power, ipmi) = r?;
-        let ipmi = match ipmi {
+        let (power, ipmi_on) = r?;
+        let ipmi = match ipmi_on {
             Some(true) => "on",
             Some(false) => "off",
             None => "unknown",
         };
+        let _ = app.emit("ilo-ipmi", ipmi_on);
         note(app, true, format!("{power}; IPMI over LAN {ipmi}"));
         Ok(())
     });
@@ -175,7 +176,18 @@ pub fn ilo_ipmi(app: AppHandle, ip: String, user: String, pass: String, on: bool
         })();
         cli.close();
         r?;
+        let _ = app.emit("ilo-ipmi", Some(on));
         note(app, true, format!("IPMI over LAN is {}", if on { "on (SOL can connect; the BIOS must use the virtual serial port)" } else { "off" }));
+        Ok(())
+    });
+}
+
+/// The iLO's open sessions (web UI, consoles, SSH, IPMI), from Redfish.
+#[tauri::command]
+pub fn ilo_sessions(app: AppHandle, ip: String, user: String, pass: String) {
+    spawn(app, move |app| {
+        let lines = crate::ilo::session_list(&ip, &user, &pass)?;
+        note(app, true, format!("{} session(s): {}", lines.len(), lines.join(" | ")));
         Ok(())
     });
 }

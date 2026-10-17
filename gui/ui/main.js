@@ -676,7 +676,20 @@ document.querySelectorAll('#ilorow button[data-ilo]').forEach((b) => {
   const run = () => invoke('ilo_power', { ...iloArgs(), action: b.dataset.ilo });
   b.onclick = b.classList.contains('confirm') ? iloConfirmed(b, run) : iloNeedPass(run);
 });
-$('iloipmi').onclick = iloNeedPass(() => invoke('ilo_ipmi', { ...iloArgs(), on: true }));
+let iloIpmiOn = null; // last known state of IPMI over LAN (null: not known)
+const iloIpmiButton = (on) => {
+  iloIpmiOn = on;
+  const b = $('iloipmi');
+  b.textContent = on ? 'Disable IPMI' : 'Enable IPMI';
+  b.classList.toggle('confirm', !!on); // turning it off can cut a running SOL session: click twice
+  b.classList.remove('armed'); clearTimeout(b._t);
+};
+$('iloipmi').onclick = (ev) => {
+  const b = ev.currentTarget, run = () => invoke('ilo_ipmi', { ...iloArgs(), on: !iloIpmiOn });
+  (b.classList.contains('confirm') ? iloConfirmed(b, run) : iloNeedPass(run))();
+};
+$('ilosessions').onclick = iloNeedPass(() => invoke('ilo_sessions', iloArgs()));
+listen('ilo-ipmi', (e) => iloIpmiButton(e.payload));
 listen('ilo-note', (e) => iloNote(e.payload.text));
 $('ip').addEventListener('change', () => updateIloRow());
 $('proto').addEventListener('change', () => updateIloRow());
