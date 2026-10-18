@@ -2,6 +2,10 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [2.0.6] - 2026-10-18
+### Added
+- `build.sh --target linux --docker [--arch x64|arm64] [--package ...]`: Linux packages built in a Docker container (`docker/linux/Dockerfile`, Ubuntu 24.04 with the webkit2gtk, GTK and OpenSSL dev packages, rpm tools, Rust and tauri-cli), so a Mac (or any Docker host) can produce them. It is the default for `--target linux` on a host that is not Linux. The repo is mounted at `/src`, target directories live in Docker volumes (`bobcat-target-<arch>`, `bobcat-gui-target-<arch>`, `bobcat-cargo-<arch>`), `--arch` picks the container platform (x64 = linux/amd64, the default, emulated on Apple Silicon; arm64 CLI files get an `-arm64` suffix). Built on an Apple Silicon Mac with OrbStack: `bobcat_2.0.5_amd64.deb`, `bobcat-2.0.5-1.x86_64.rpm`, `bobcat_2.0.5_amd64.AppImage` and `bobcat-cli-2.0.5-linux` (x86-64) were produced; none of them was installed or run, and `--arch arm64` was not tried.
+
 ## [2.0.5] - 2026-10-17
 ### Added
 - GUI: the iLO row's IPMI button is now a switch. Status (and every IPMI change) tells the page the state, and the button reads **Disable IPMI** (two clicks, it can cut a running SOL session) or Enable IPMI; before the first Status it enables.

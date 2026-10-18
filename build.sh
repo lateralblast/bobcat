@@ -4,6 +4,10 @@
 #   ./build.sh --target linux [--package deb|rpm|appimage|all]   (comma list allowed, e.g. deb,rpm; default: the distribution's own
 #                                                                 package, deb on Debian/Ubuntu, rpm on RHEL/Fedora/Alma/Rocky/SUSE, else appimage;
 #                                                                 --target deb / --target rpm = linux with that package only)
+#   ./build.sh --target linux --docker [--arch x64|arm64] [--package ...]   (Linux packages in a Docker container, e.g. on a Mac: the
+#                                                                 image is docker/linux/Dockerfile (Ubuntu 24.04), --arch picks the
+#                                                                 container platform, default x64 = linux/amd64; this is the default
+#                                                                 for --target linux on a host that is not Linux)
 #   ./build.sh --target windows      (on Windows, e.g. in Git Bash; on Linux it builds in a Windows 11 VM, see windows/vm.py:
 #                                     needs docker and /dev/kvm, run `python3 windows/vm.py up` once first)
 #   ./build.sh [--target <t>] --release [--draft] [--yes] [--dry-run]
@@ -26,18 +30,19 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --target mac|linux|deb|rpm|windows [--arch arm64|x64|universal] [--package deb|rpm|appimage|all] [--no-cli]"
+  echo "usage: $0 --target mac|linux|deb|rpm|windows [--arch arm64|x64|universal] [--package deb|rpm|appimage|all] [--docker] [--no-cli]"
   echo "       $0 [--target <t>] --release [--draft] [--yes] [--dry-run]"
   echo "       $0 --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]"
   exit "${1:-1}"
 }
 
-target="" arch="" package="" cli=1 delete=0 del_version="" keep_tag=0 release=0 draft=0 yes=0 dry=0
+target="" arch="" package="" docker=0 cli=1 delete=0 del_version="" keep_tag=0 release=0 draft=0 yes=0 dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) target="${2:-}"; shift 2 ;;
     --arch) arch="${2:-}"; shift 2 ;;
     --package|--format) package="${2:-}"; shift 2 ;;
+    --docker) docker=1; shift ;;
     --no-cli) cli=0; shift ;;
     --release) release=1; shift ;;
     --delete-release)
@@ -93,6 +98,35 @@ windows_vm() {
   echo "done: $dist"
 }
 
+# Linux packages in a container (a Mac, or any host with Docker). The repo is mounted at /src; target
+# directories live in Docker volumes so they never mix with the host's own builds; `build.sh` runs inside
+# on Linux and writes to dist/.
+linux_docker() {
+  command -v docker >/dev/null || { echo "docker not found (needed for --docker, and for --target linux on a host that is not Linux)" >&2; exit 1; }
+  docker info >/dev/null 2>&1 || { echo "the Docker daemon is not running" >&2; exit 1; }
+  local plat tag
+  case "${arch:-x64}" in
+    x64|amd64|x86_64) plat=linux/amd64; tag=amd64 ;;
+    arm64|aarch64) plat=linux/arm64; tag=arm64 ;;
+    *) echo "unknown --arch for Linux: $arch (x64, arm64)" >&2; exit 1 ;;
+  esac
+  echo "== Linux build in Docker ($plat) =="
+  docker build --platform "$plat" -t "bobcat-linux-build:$tag" "$root/docker/linux"
+  mkdir -p "$dist"
+  local inner=(./build.sh --target linux)
+  [ -z "$package" ] || inner+=(--package "$package")
+  [ "$cli" = 1 ] || inner+=(--no-cli)
+  docker run --rm --platform "$plat" \
+    -v "$root":/src \
+    -v "bobcat-target-$tag":/src/target \
+    -v "bobcat-gui-target-$tag":/src/gui/src-tauri/target \
+    -v "bobcat-cargo-$tag":/opt/cargo/registry \
+    -e BOBCAT_LINUX_ARCH="$tag" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+    "bobcat-linux-build:$tag" \
+    sh -c '"$@"; rc=$?; chown -R "$HOST_UID:$HOST_GID" /src/dist /src/Cargo.lock /src/gui/src-tauri/Cargo.lock 2>/dev/null; exit $rc' sh "${inner[@]}"
+  echo "done: $dist"
+}
+
 build_target() {
   host=$(uname -s)
   case "$target" in deb|rpm) package="$target"; target=linux ;; esac
@@ -114,6 +148,9 @@ build_target() {
         *) echo "unknown --package: $p (deb, rpm, appimage, all)" >&2; exit 1 ;;
       esac
     done
+  fi
+  if [ "$target" = linux ] && { [ "$docker" = 1 ] || [ "$host" != Linux ]; }; then
+    linux_docker; return
   fi
   if [ "$target" = linux ]; then
     case ",$bundles," in
@@ -148,8 +185,9 @@ build_target() {
       esac
     fi
   elif [ -n "$arch" ]; then
-    echo "--arch only applies to --target mac" >&2; exit 1
+    echo "--arch only applies to --target mac (or --target linux with --docker)" >&2; exit 1
   fi
+  [ "$docker" = 0 ] || [ "$target" = linux ] || { echo "--docker only applies to --target linux" >&2; exit 1; }
 
   mkdir -p "$dist"
   echo "== building the GUI installer ($target, $bundles) =="
@@ -170,8 +208,10 @@ build_target() {
     (cd "$root" && cargo build --release --features vendored ${triple_args[@]+"${triple_args[@]}"})
     bin=$(find "$root/target" -path '*/release/bobcat-cli*' -type f ! -name '*.d' -perm -u+x -newer "$root/Cargo.toml" | head -1)
     if [ -n "$bin" ]; then
-      cp "$bin" "$dist/bobcat-cli-$version-$target"
-      echo "  $dist/bobcat-cli-$version-$target"
+      # an arm64 Docker build is named apart from the x64 one (x64 keeps the plain name)
+      suffix=""; [ "${BOBCAT_LINUX_ARCH:-}" != arm64 ] || suffix="-arm64"
+      cp "$bin" "$dist/bobcat-cli-$version-$target$suffix"
+      echo "  $dist/bobcat-cli-$version-$target$suffix"
     fi
   fi
   echo "done: $dist"

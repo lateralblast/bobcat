@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 2.0.5
+Version: 2.0.6
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -56,7 +56,7 @@ process arguments (`--pass` and `--vncpass` do, if you use them).
 | `--amt` (or `--amt --info`) | Shows what the device reports: firmware, host name, provisioning, power state, redirection (SOL/IDER) and KVM state. |
 | `--amt --power status\|on\|off\|off-hard\|cycle\|reset\|sleep\|hibernate\|nmi` | Shows or changes the power state. Everything but `on` and `status` asks you to type `yes` first (`--yes` skips it). Only the states the device offers in its current power state are accepted. |
 | `--amt --enable vnc` | Turns on the AMT KVM: sets the RFB password (`--vncpass`, `BOBCAT_VNC_PASS` or the prompt; exactly 8 characters with upper case, lower case, a digit and a special character), opens VNC on port 5900 and enables the KVM service. `--disable vnc` turns it off. |
-| `--power status\|on\|off\|off-hard\|reset\|nmi` (no `--amt`) | An HPE iLO: shows or changes the server's power with the iLO CLI's `POWER` verb over SSH (`cycle`, `sleep` and `hibernate` are AMT-only). Everything but `on` and `status` asks you to type `yes` first (`--yes` skips it). `--enable sol` / `--disable sol` switch the iLO's IPMI over LAN (needed for `--console sol`); `--console ssh` opens the iLO's virtual serial port (`vsp`). *Confirmed working on an iLO 4 (which actions was not recorded); the serial consoles were not yet tried on a running server.* |
+| `--power status\|on\|off\|off-hard\|reset\|nmi` (no `--amt`) | An HPE iLO: shows or changes the server's power with the iLO CLI's `POWER` verb over SSH (`cycle`, `sleep` and `hibernate` are AMT-only). Everything but `on` and `status` asks you to type `yes` first (`--yes` skips it). `--enable sol` / `--disable sol` switch the iLO's IPMI over LAN (needed for `--console sol`); `--console ssh` opens the iLO's virtual serial port (`vsp`). *Confirmed working on an iLO 4 (which actions was not recorded); the serial consoles show the boot process of a running server once the BIOS serial redirection is set, but the virtual serial port keeps no history, so connect early in the boot to see the BIOS screens.* |
 | `--amt --boot hdd\|pxe\|cd\|diag\|bios\|ider-cd\|ider-floppy\|normal\|status` | Chooses what the next start does: boot once from that device, enter the BIOS setup, clear the override, or show the boot settings. It powers nothing: combine it with `--power on` (machine off) or `--power reset` / `cycle`. `--boot-sol` sends the BIOS / boot text to Serial over LAN (then `--console sol`). |
 | `--amt --ider-cd FILE.iso` / `--ider-floppy FILE.img` | Virtual media (IDE-R): serves the image read-only to the machine as a CD/DVD or floppy drive until Ctrl+C. `--ider-start reboot\|graceful\|now` says when the machine starts using it. To boot from it, give both in one command: `--amt --ider-cd x.iso --ider-boot --power reset` (`--ider-boot` is the same as `--boot ider-cd`, or `ider-floppy` with a floppy; the session is opened before the boot setting and the power action). Needs IDE-R enabled: `--amt --enable ider`. |
 | `--amt --enable sol\|ider` / `--disable ...` | Switches Serial over LAN and IDE-R on or off, leaving the other as it is. |
@@ -194,6 +194,7 @@ For an Intel AMT (vPro) machine the usual tool is MeshCommander (version 0.9.5-a
 ./build.sh --target mac --arch universal   # or arm64 / x64
 ./build.sh --target linux      # the distribution's own package: .deb on Debian/Ubuntu, .rpm on RHEL/Fedora/Alma/Rocky/SUSE, else .AppImage (build on Linux)
 ./build.sh --target linux --package rpm   # or deb / appimage / all, or a list like deb,rpm (rpm needs rpmbuild)
+./build.sh --target linux --docker   # Linux packages in a Docker container (docker/linux/Dockerfile, Ubuntu 24.04), e.g. on a Mac; the default for --target linux on a host that is not Linux; --arch x64 (default, linux/amd64) or arm64
 ./build.sh --target deb        # shortcut for --target linux --package deb (also --target rpm)
 ./build.sh --target windows    # NSIS setup.exe + bobcat-cli.exe: on Windows (Git Bash) natively; on Linux in a Windows 11 VM (python3 windows/vm.py up first; needs docker and /dev/kvm)
 ```
