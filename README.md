@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 2.0.6
+Version: 2.0.7
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
@@ -196,6 +196,7 @@ For an Intel AMT (vPro) machine the usual tool is MeshCommander (version 0.9.5-a
 ./build.sh --target linux --package rpm   # or deb / appimage / all, or a list like deb,rpm (rpm needs rpmbuild)
 ./build.sh --target linux --docker   # Linux packages in a Docker container (docker/linux/Dockerfile, Ubuntu 24.04), e.g. on a Mac; the default for --target linux on a host that is not Linux; --arch x64 (default, linux/amd64) or arm64
 ./build.sh --target deb        # shortcut for --target linux --package deb (also --target rpm)
+./build.sh --target windows --docker   # cross-compiled in a Linux container (docker/windows/Dockerfile, MinGW); the default on a Mac
 ./build.sh --target windows    # NSIS setup.exe + bobcat-cli.exe: on Windows (Git Bash) natively; on Linux in a Windows 11 VM (python3 windows/vm.py up first; needs docker and /dev/kvm)
 ```
 

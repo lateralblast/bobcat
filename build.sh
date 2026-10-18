@@ -10,6 +10,8 @@
 #                                                                 for --target linux on a host that is not Linux)
 #   ./build.sh --target windows      (on Windows, e.g. in Git Bash; on Linux it builds in a Windows 11 VM, see windows/vm.py:
 #                                     needs docker and /dev/kvm, run `python3 windows/vm.py up` once first)
+#   ./build.sh --target windows --docker   (cross-compiles in a Linux container, docker/windows/Dockerfile: MinGW,
+#                                     x86_64-pc-windows-gnu; the default on a Mac; nothing built this way has been run on Windows)
 #   ./build.sh [--target <t>] --release [--draft] [--yes] [--dry-run]
 #   ./build.sh --delete-release [<version>] [--keep-tag] [--yes] [--dry-run]
 # A target can only be built on its own platform (the GUI links the system web view).
@@ -127,6 +129,35 @@ linux_docker() {
   echo "done: $dist"
 }
 
+# Windows installer and CLI cross-compiled in a Linux container (a Mac, or Linux without the VM).
+windows_docker() {
+  command -v docker >/dev/null || { echo "docker not found" >&2; exit 1; }
+  docker info >/dev/null 2>&1 || { echo "the Docker daemon is not running" >&2; exit 1; }
+  echo "== Windows cross build in Docker (x86_64-pc-windows-gnu) =="
+  docker build -t bobcat-windows-cross "$root/docker/windows"
+  mkdir -p "$dist"
+  local rc=0
+  docker run --rm \
+    -v "$root":/src \
+    -v bobcat-wincross-target:/src/target \
+    -v bobcat-wincross-gui-target:/src/gui/src-tauri/target \
+    -v bobcat-wincross-cargo:/opt/cargo/registry \
+    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+    bobcat-windows-cross \
+    sh -c '/src/docker/windows/build.sh "$@"; rc=$?; chown -R "$HOST_UID:$HOST_GID" /src/windows/out/cross /src/Cargo.lock /src/gui/src-tauri/Cargo.lock 2>/dev/null; exit $rc' sh $([ "$cli" = 1 ] || echo --no-cli) || rc=$?
+  [ "$rc" = 0 ] || { echo "the Windows cross build failed" >&2; exit "$rc"; }
+  local f
+  for f in "$root"/windows/out/cross/*-setup.exe; do
+    [ -f "$f" ] || continue
+    cp "$f" "$dist/bobcat_${version}_x64-setup.exe"; echo "  $dist/bobcat_${version}_x64-setup.exe"
+  done
+  if [ "$cli" = 1 ] && [ -f "$root/windows/out/cross/bobcat-cli.exe" ]; then
+    cp "$root/windows/out/cross/bobcat-cli.exe" "$dist/bobcat-cli-$version-windows.exe"
+    echo "  $dist/bobcat-cli-$version-windows.exe"
+  fi
+  echo "done: $dist"
+}
+
 build_target() {
   host=$(uname -s)
   case "$target" in deb|rpm) package="$target"; target=linux ;; esac
@@ -158,6 +189,7 @@ build_target() {
     esac
   fi
   if [ "$target" = windows ] || [ "$target" = win ]; then
+    if [ "$docker" = 1 ] || [ "$host" = Darwin ]; then windows_docker; return; fi
     if [ "$host" = Linux ]; then windows_vm; return; fi
   fi
   case "$host" in
@@ -187,7 +219,7 @@ build_target() {
   elif [ -n "$arch" ]; then
     echo "--arch only applies to --target mac (or --target linux with --docker)" >&2; exit 1
   fi
-  [ "$docker" = 0 ] || [ "$target" = linux ] || { echo "--docker only applies to --target linux" >&2; exit 1; }
+  [ "$docker" = 0 ] || [ "$target" = linux ] || { echo "--docker only applies to --target linux and windows" >&2; exit 1; }
 
   mkdir -p "$dist"
   echo "== building the GUI installer ($target, $bundles) =="

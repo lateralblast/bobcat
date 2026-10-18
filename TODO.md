@@ -91,6 +91,7 @@ Status: [ ] open, [~] in progress, [x] done
 - [x] GUI HTML5: Paste, Copy text and text size on the embedded console (1.1.9)
 - [ ] GUI HTML5: on-screen keyboard through the same key events
 - [x] `build.sh --target mac` installer (1.4.0; arm64 DMG tried and working, including the Local Network permission)
+- [ ] build.sh --target windows --docker (2.0.7, MinGW cross build on the Mac: installer and CLI built, never run on Windows): run the installer and `bobcat-cli.exe` on a real Windows machine, and check the gnu build behaves like the MSVC one from the VM (WebView2 embedding, the console views)
 - [ ] build.sh --docker (2.0.6): install-test the x64 deb, rpm and AppImage it produced (never installed or run), and try `--arch arm64`
 - [~] build.sh: install-test the deb and rpm (1.8.6: the deb installs on Ubuntu 24.04 and the rpm on Fedora 42 in containers with no missing libraries; the GUI was not started there; still to do: build the rpm on an RPM distribution)
 - [x] `build.sh --target deb` / `--package deb|rpm|appimage|all` (1.4.7; deb builds on Linux, install not tried)
