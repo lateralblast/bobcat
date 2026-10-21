@@ -14,6 +14,22 @@ Tested against an iDRAC8 and an Intel AMT 12 device; the settings it changes are
 | `bobcat-cli` | Command line: enables and disables iDRAC services, opens text consoles in your terminal, and shows the VNC console **as text**. With `--amt`: Intel AMT info, power, boot source, Serial over LAN and the KVM. |
 | `bobcat` | Desktop app (Tauri 2): the VNC console as a window, plus SSH and SOL terminals, the Intel AMT KVM and Serial over LAN, on-screen keyboard, copy and paste. |
 
+## Supported protocols
+
+| Protocol (app selector) | Reaches | Used for | App | CLI | Status |
+|---|---|---|---|---|---|
+| VNC | Dell iDRAC VNC server (TLS, certificate pinned) | graphical console, drawn in the app; as text in the CLI (`--console vnc`) | yes | yes | tested (iDRAC8) |
+| HTML5 | Dell iDRAC's own web console, or HP iLO 4 (recognised by itself; needs an Advanced licence) | graphical console in a child view | yes | no | iDRAC8 tested; iLO 4 tested (login, picture, mouse; the server ignores the virtual keyboard) |
+| Java | Dell iDRAC's, or HP iLO 4's, Java console | graphical console in a window docked to the app (needs Java; downloaded on macOS) | yes | no | iDRAC8 and iLO 4 tested |
+| SSH | iDRAC (`console com2`) or HP iLO (iLO CLI, then `vsp`) | text console | yes | yes (`--console ssh`) | iDRAC8 tested; iLO tested in the CLI |
+| SOL | any BMC with IPMI Serial over LAN (needs `ipmitool`) | text console | yes | yes (`--console sol`) | iDRAC8 tested |
+| AMT | Intel AMT KVM (ports 16992/16993 and 16994/16995, TLS pinned) | graphical console; power, boot source and IDE-R virtual media | yes | yes (`--amt`) | tested (AMT 12) |
+| AMT SOL | Intel AMT Serial over LAN | text console | yes | yes (`--amt --console sol`) | tested (AMT 12) |
+| ARD | a Mac's Screen Sharing / Remote Management (Apple's login, security type 30) | graphical console | yes | no | tested against two Macs |
+| RDP | Windows Remote Desktop (NLA/NTLM with a local account) | graphical console, text clipboard, desktop follows the window | yes | no | tested against Windows |
+
+"Tested" means checked by the author against real hardware; the details and what is still untried are in `CHANGELOG.md`, `TODO.md` and `RESEARCH.md`. The Windows build has no console modes in the CLI.
+
 ## bobcat-cli
 
 ```
@@ -111,7 +127,7 @@ BOBCAT_VNC_PASS='<vnc password>' cargo run
 Requires the Tauri 2 Linux dependencies (WebKitGTK 4.1). No Node/npm needed. Enter the iDRAC IP and password
 (prefilled from `BOBCAT_VNC_PASS`) and click Connect.
 
-Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (the BMC's own web console: Dell iDRAC, or HP iLO, which bobcat recognises by itself; iLO needs an Advanced licence and is not tried in the app yet), **Java** (Dell's, or HP iLO 4's, Java console, in a window of its own), **AMT SOL** (the serial console of an Intel AMT device, no ipmitool needed), **AMT** (the KVM of an Intel AMT device, drawn in the canvas like VNC: host, user `admin` and the AMT password; no port or TLS setting), **ARD** (a Mac's Screen Sharing / Remote Management, drawn in the canvas like VNC: host, port 5900, the Mac user name and password; Apple's own login is done by bobcat and the picture then goes through a local bridge; not tried against a Mac yet), **RDP** (Windows Remote Desktop, drawn in the canvas: host, port 3389, Windows user name and password, NLA login with a local account; keyboard, mouse, picture and a text clipboard; with Fit window the desktop follows the window size; no sound), **SSH**
+Choose the **Protocol**: VNC (default, the graphical console), **HTML5** (the BMC's own web console: Dell iDRAC, or HP iLO, which bobcat recognises by itself; iLO needs an Advanced licence and is not tried in the app yet), **Java** (Dell's, or HP iLO 4's, Java console, in a window of its own), **AMT SOL** (the serial console of an Intel AMT device, no ipmitool needed), **AMT** (the KVM of an Intel AMT device, drawn in the canvas like VNC: host, user `admin` and the AMT password; no port or TLS setting), **ARD** (a Mac's Screen Sharing / Remote Management, drawn in the canvas like VNC: host, port 5900, the Mac user name and password; Apple's own login is done by bobcat and the picture then goes through a local bridge), **RDP** (Windows Remote Desktop, drawn in the canvas: host, port 3389, Windows user name and password, NLA login with a local account; keyboard, mouse, picture and a text clipboard; with Fit window the desktop follows the window size; no sound), **SSH**
 (the iDRAC's `console com2`) or **SOL** (IPMI Serial over LAN via `ipmitool`). HTML5, Java, SSH and SOL need the iDRAC username
 and password; SSH and SOL show a terminal.
 `BOBCAT_PROTOCOL=vnc|html5|java|amt|ssh|sol|amtsol`, `BOBCAT_USER` and `BOBCAT_PASS` set the starting values. The **Remember** checkbox keeps the password in the OS keychain (the iDRAC login for SSH, SOL, HTML5 and Java, shared with `bobcat-cli`; the VNC password for VNC); unticking it and connecting deletes the entry.
