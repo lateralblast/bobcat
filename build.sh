@@ -81,7 +81,7 @@ native_package() {
 windows_vm() {
   command -v python3 >/dev/null || { echo "python3 not found (windows/vm.py needs it)" >&2; exit 1; }
   vmrc=0
-  python3 -I "$root/windows/vm.py" build || vmrc=$?
+  python3 -I "$root/windows/vm.py" build --manage || vmrc=$?
   mkdir -p "$dist"
   found=0
   for f in "$root"/windows/out/bundle/nsis/*-setup.exe; do

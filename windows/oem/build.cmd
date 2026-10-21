@@ -26,6 +26,8 @@ robocopy "%SHARE%\src" %WORK% /MIR /XD "%SHARE%\src\windows\out" "%SHARE%\src\di
 set BUILDRC=0
 cd /d %WORK%\gui\src-tauri
 echo Building the GUI installer >> "%LOG%"
+rem the vendored OpenSSL has no .pdb, so the MSVC linker prints one LNK4099 warning per object file (hundreds of lines, harmless)
+set RUSTFLAGS=-A linker-messages
 cargo tauri build --bundles nsis --features vendored < nul >> "%LOG%" 2>&1
 if errorlevel 1 set BUILDRC=1
 rem the installer is copied as soon as it exists, so a failing CLI build does not lose it

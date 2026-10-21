@@ -74,11 +74,13 @@ def stage_scripts():
         shutil.copy(os.path.join(HERE, "oem", name), os.path.join(OUT, "oem", name))
 
 
-def up():
+def up(quiet=False):
     preflight()
     os.makedirs(OUT, exist_ok=True)
     stage_scripts()
     compose("up", "-d")
+    if quiet:
+        return
     print("\nThe first start downloads Windows (about 5 GB), installs it, then installs the Visual Studio Build\n"
           "Tools, Rust, Perl and tauri-cli, which takes a good while. Watch it at http://127.0.0.1:8007 and check with: vm.py status\n"
           "Windows is Microsoft's software, used under its own licence terms.")
@@ -100,6 +102,24 @@ def read_from(path, offset):
     sys.stdout.write(chunk.decode("utf-8", errors="replace").replace("\r", ""))
     sys.stdout.flush()
     return offset + len(chunk)
+
+
+def build_managed(build_args, timeout):
+    """Start the VM if it is not running (its build tools must already be installed), build, and stop it again
+    if this started it, also after a failed or interrupted build. A VM that was already running is left running."""
+    started = False
+    if not running():
+        if not os.path.exists(READY):
+            sys.exit("The VM has never finished installing its build tools. Run: python3 %s up   and wait (see status)" % os.path.relpath(HEADER))
+        print("Starting the Windows VM...")
+        up(quiet=True)
+        started = True
+    try:
+        build(build_args, timeout)
+    finally:
+        if started:
+            print("Stopping the Windows VM (its disk is kept)...")
+            compose("down", check=False)
 
 
 def build(build_args, timeout):
@@ -135,6 +155,7 @@ def main():
     sub.add_parser("down", help="Stop the VM; its disk is kept, so the next up is quick")
     build_parser = sub.add_parser("build", help="Build the GUI installer and bobcat-cli in the VM")
     build_parser.add_argument("--timeout", type=int, default=7200, help="Give up waiting after this many seconds (default 7200)")
+    build_parser.add_argument("--manage", action="store_true", help="Start the VM first if it is not running and stop it after the build (only if this started it)")
     build_parser.add_argument("build_args", nargs="*", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.version:
@@ -149,7 +170,7 @@ def main():
     elif args.command == "down":
         compose("down")
     elif args.command == "build":
-        build(args.build_args, args.timeout)
+        (build_managed if args.manage else build)(args.build_args, args.timeout)
     else:
         parser.print_help()
 
