@@ -5,14 +5,46 @@
 Version: 2.0.9
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
-reaching a Dell iDRAC's consoles (graphical VNC, text over SSH or Serial over LAN) and for setting those services up.
-It also reaches Intel AMT (vPro) machines: their KVM screen, Serial over LAN, power and boot control.
-Tested against an iDRAC8 and an Intel AMT 12 device; the settings it changes are named in `CHANGELOG.md` and `RESEARCH.md`.
+reaching the consoles of remote machines: Dell iDRAC, HP iLO 4 and Intel AMT (vPro) management controllers, and also a
+Mac's Screen Sharing and Windows Remote Desktop. It opens graphical and text consoles, sets those services up, and
+adds copy and paste and an on-screen keyboard. Licensed under CC BY-NC-SA 4.0 (`LICENSE.md`).
 
 | Program | What it is |
 |---|---|
-| `bobcat-cli` | Command line: enables and disables iDRAC services, opens text consoles in your terminal, and shows the VNC console **as text**. With `--amt`: Intel AMT info, power, boot source, Serial over LAN and the KVM. |
-| `bobcat` | Desktop app (Tauri 2): the VNC console as a window, plus SSH and SOL terminals, the Intel AMT KVM and Serial over LAN, on-screen keyboard, copy and paste. |
+| `bobcat-cli` | Command line: enables and disables iDRAC services, opens text consoles in your terminal, and shows the VNC console **as text**. With `--amt`: Intel AMT info, power, boot source, IDE-R virtual media, Serial over LAN and the KVM. |
+| `bobcat` | Desktop app (Tauri 2): graphical consoles (iDRAC VNC, HTML5 and Java, iLO 4, Intel AMT, a Mac's Screen Sharing, Windows RDP), SSH and Serial over LAN terminals, on-screen keyboard, copy and paste. |
+
+## Introduction
+
+Why Bobcat? It is two programs, a desktop app and a command line tool.
+
+Currently, to open a remote console on an iDRAC, an iLO or an Intel AMT device, you have to use a different tool or browser for each.
+A browser means logging in to the management web interface, finding the virtual console link, clicking on it,
+opening another window, and so on. Often this needs a specific version of a web browser, pop ups enabled, ad blockers turned off, etc.
+These interfaces also often have no copy and paste, or an on-screen keyboard.
+Another annoyance was having to remember the commands, or the places in the web interface, to enable or disable services and to kill hung sessions.
+
+I thought it would be far easier and faster to talk to the services directly, rather than going through different browsers and tools.
+Bobcat uses the same protocols and gives you the same functionality, but in one tool. It also adds copy and paste.
+Besides enabling and disabling the remote console services, the CLI can connect to some of them.
+The text based services (IPMI Serial over LAN with `ipmitool`, SSH, and Intel AMT's own Serial over LAN) are supported directly. Where a console is graphical
+but shows text, `bobcat-cli` can read the VNC screen with OCR (`tesseract`) and print it as real text, and the app's Copy does the same on the HTML5 and
+Java consoles (HTML5 on Linux, Java on macOS and Linux), so the text can be copied.
+
+Bobcat is tested only on the hardware I have (see the table below), and `CHANGELOG.md` and `TODO.md` say what is still untried. Reports and test devices for other hardware are welcome.
+
+### Platforms and requirements
+
+- macOS, Linux and Windows. The Windows CLI has no console modes yet (see Known issues).
+- `ipmitool` for Serial over LAN, `tesseract` for OCR, and a Java runtime for the Java consoles (macOS downloads one). `bobcat-cli --check` reports what is missing and `--check --install` installs it.
+- HP iLO's HTML5 console needs an Advanced licence.
+- Not covered: iLO 5 and 6 (they use a different console and have no Java applet) and iDRAC9 (untested).
+- Certificates and SSH host keys are pinned on first use, and the **Remember** checkbox keeps passwords in the OS keychain.
+
+### Getting it
+
+Installers (`.dmg`, `.deb`, `.rpm`, `.AppImage`, Windows setup) and the CLI binaries are on the project's GitHub Releases page, or build them yourself (see Building installers).
+A first try: `bobcat-cli --ip <idrac> --check`, or start the app and pick a protocol.
 
 ## Supported protocols
 
