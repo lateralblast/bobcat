@@ -368,9 +368,17 @@ fn tls_forwarder(ip: &str, port: u16) -> Result<u16, String> {
 /// Zrle (compressed) first, then CopyRect (scrolling and moving windows cost the server a few bytes
 /// instead of the pixels; the page applies it locally), Raw as fallback. BOBCAT_ENCODING=raw forces
 /// Raw, BOBCAT_COPYRECT=0 leaves CopyRect out.
+/// The `vnc` crate turns each byte of the desktop name into a Latin-1 character; servers send UTF-8
+/// (a Mac's "Richard's Mac mini" has a typographic apostrophe), so convert back.
+fn server_name(name: &str) -> String {
+    let bytes: Option<Vec<u8>> = name.chars().map(|c| u8::try_from(c as u32).ok()).collect();
+    bytes.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_else(|| name.to_string())
+}
+
 fn encodings() -> Vec<Encoding> {
-    match std::env::var("BOBCAT_ENCODING").as_deref() {
-        Ok("raw") => vec![Encoding::Raw],
+    let want = std::env::var("BOBCAT_ENCODING").unwrap_or_default();
+    match want.as_str() {
+        "raw" => vec![Encoding::Raw],
         _ if std::env::var("BOBCAT_COPYRECT").as_deref() == Ok("0") => vec![Encoding::Zrle, Encoding::Raw],
         _ => vec![Encoding::Zrle, Encoding::CopyRect, Encoding::Raw],
     }
@@ -557,7 +565,7 @@ fn run(app: &AppHandle, ip: &str, port: u16, tls: bool, pass: &str, remember: bo
     let chan = FRAMES.lock().unwrap().clone();
     let debug = std::env::var("BOBCAT_DEBUG").is_ok();
     let (mut w, mut h) = client.size();
-    status(app, format!("connected: {} ({w}x{h})", client.name()));
+    status(app, format!("connected: {} ({w}x{h})", server_name(client.name())));
     let mut batch: Vec<u8> = Vec::new();
     put_size(app, &chan, &mut batch, w, h);
     flush_frames(&chan, &mut batch);

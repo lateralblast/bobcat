@@ -2,6 +2,17 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [2.0.9] - 2026-10-21
+### Added
+- GUI: **Stretch to window** in the size menu for the canvas protocols (VNC, AMT, ARD; RDP keeps Fit window because it resizes the Windows desktop). It fills the whole picture area and ignores the aspect ratio (Fit window keeps it); the mouse follows the stretched picture. It was already there for the iLO Java console.
+
+## [2.0.8] - 2026-10-21
+### Fixed
+- ARD: a Mac mini (macOS "Golden Gate") once drew stale and black areas with ZRLE and CopyRect; Raw was clean, but further testing showed ZRLE is the best encoding there, so nothing was changed (`BOBCAT_ENCODING=raw` and `BOBCAT_COPYRECT=0` remain for comparing).
+- Canvas protocols: the desktop name in the status bar is decoded as UTF-8 (the `vnc` crate read it as Latin-1, so "Richard's Mac mini" showed garbage).
+### Changed
+- ARD: a refused login now says the user may have to be added by name under Sharing > Screen Sharing > Allow access for, even when "All users" is set (that was the cause on the Mac mini; see RESEARCH.md).
+
 ## [2.0.7] - 2026-10-18
 ### Added
 - `build.sh --target windows --docker` (the default for `--target windows` on a Mac): the Windows installer and `bobcat-cli.exe` are **cross-compiled in a Linux container** (`docker/windows/Dockerfile`: Ubuntu 24.04, mingw-w64 with posix threads, NSIS, Rust target `x86_64-pc-windows-gnu`, tauri-cli; `docker/windows/build.sh` runs `cargo tauri build --target x86_64-pc-windows-gnu --bundles nsis --features vendored` and the CLI build). It runs natively on Apple Silicon (no emulation). Built on a Mac with OrbStack at the first try: `bobcat_2.0.6_x64-setup.exe` (NSIS, 11.8 MB) and `bobcat-cli-2.0.6-windows.exe` (16.8 MB), the first Windows files with the IronRDP, iLO and AMT code. They use the MinGW (gnu) target, not the MSVC one the VM builds; neither file has been run on Windows.

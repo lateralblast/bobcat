@@ -130,11 +130,21 @@ try { zoomSetting = localStorage.getItem('bobcat.zoom') || localStorage.getItem(
 $('zoom').value = zoomSetting;
 
 function zoomFactor() {
-  if ($('zoom').value !== 'fit') return Number($('zoom').value);
+  if ($('zoom').value !== 'fit' && $('zoom').value !== 'stretch') return Number($('zoom').value);
   const wrap = $('wrap');
   const aw = wrap.clientWidth - 2 * PAD, ah = wrap.clientHeight - 2 * PAD;
   return Math.max(0.1, Math.min(4, aw / fb.width, ah / fb.height));
 }
+// canvas size in CSS pixels; "Stretch to window" fills the area and ignores the aspect ratio
+function canvasSize() {
+  if ($('zoom').value === 'stretch') {
+    const wrap = $('wrap');
+    return { w: Math.max(50, wrap.clientWidth - 2 * PAD), h: Math.max(50, wrap.clientHeight - 2 * PAD) };
+  }
+  const z = zoomFactor();
+  return { w: Math.round(fb.width * z), h: Math.round(fb.height * z) };
+}
+const followsWindow = () => $('zoom').value === 'fit' || $('zoom').value === 'stretch';
 // RDP: the size the Windows desktop can have to fill the canvas area (even width, within what the protocol allows)
 function rdpArea() {
   const wrap = $('wrap');
@@ -148,9 +158,8 @@ function rdpFollowWindow() {
   rdpResizeTimer = setTimeout(() => { const a = rdpArea(); invoke('rdp_resize', { w: a.w, h: a.h }); }, 400);
 }
 function applyZoom() {
-  const z = zoomFactor();
   const dpr = window.devicePixelRatio || 1;
-  const cssW = Math.round(fb.width * z), cssH = Math.round(fb.height * z);
+  const { w: cssW, h: cssH } = canvasSize();
   cv.style.width = cssW + 'px';
   cv.style.height = cssH + 'px';
   const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
@@ -171,21 +180,21 @@ $('zoom').onchange = () => {
   if ($('proto').value === 'html5') { invoke('html5_zoom', { factor: $('zoom').value === 'fit' ? 1 : Number($('zoom').value) }); return; }
   if (!isCanvas($('proto').value)) { applyTermFont(); return; }
   applyZoom();
-  if ($('zoom').value !== 'fit') fitWindow();
+  if (!followsWindow()) fitWindow();
   rdpFollowWindow();
 };
 window.addEventListener('resize', () => {
   reportLayout();
   rdpFollowWindow();
   if (!isCanvas($('proto').value)) { if (fit) fit.fit(); return; }
-  if ($('zoom').value === 'fit') applyZoom();
+  if (followsWindow()) applyZoom();
 });
 
 function screenResized(w, h) {
   fb.width = w;
   fb.height = h;
   applyZoom();
-  if ($('zoom').value !== 'fit') fitWindow();
+  if (!followsWindow()) fitWindow();
 }
 fbctx.imageSmoothingEnabled = false; // copies inside the picture must be exact
 function copyRect(sx, sy, dx, dy, w, h) {
@@ -567,8 +576,8 @@ function setProto() {
   hide('.login-only', proto === 'vnc');          // iDRAC user name: SSH, SOL and HTML5 log in
   hide('.no-html5', kind === 'html5');          // paste / copy / keyboard / text size are for the console views
   hide('.layout-sel', kind === 'java' || kind === 'text'); // the keyboard layout pasting follows
-  document.querySelectorAll('#zoom .java-only').forEach((o) => { o.hidden = o.disabled = kind !== 'java'; }); // Stretch is for the iLO Java console
-  if (kind !== 'java' && $('zoom').value === 'stretch') $('zoom').value = 'fit';
+  document.querySelectorAll('#zoom .java-only').forEach((o) => { o.hidden = o.disabled = kind !== 'java' && (kind !== 'vnc' || proto === 'rdp'); }); // Stretch: the iLO Java console and the canvas protocols (not RDP, which resizes the desktop)
+  if (kind !== 'java' && (kind !== 'vnc' || proto === 'rdp') && $('zoom').value === 'stretch') $('zoom').value = 'fit';
   hide('.no-java', kind === 'java');            // the Java viewer is a window of its own
   hide('.java-mac', kind === 'java' && !/Mac|Linux/.test(navigator.platform)); // Copy and Paste reach it on macOS and Linux
   $('wrap').classList.toggle('hidden', kind !== 'vnc');

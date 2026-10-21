@@ -114,8 +114,8 @@ fn security_result(s: &mut TcpStream) -> Result<(), String> {
         .and_then(|n| read_exact(s, n).ok())
         .map(|t| String::from_utf8_lossy(&t).to_string());
     Err(match reason {
-        Some(t) => format!("the Mac refused the login: {t}"),
-        None => "the Mac refused the login (wrong user name or password, or that user may not use Screen Sharing)".into(),
+        Some(t) => format!("the Mac refused the login: {t} (check the user name and password; on newer macOS the user may have to be added by name under Sharing > Screen Sharing > Allow access for, even if All users is set)"),
+        None => "the Mac refused the login (wrong user name or password, or that user may not use Screen Sharing; add the user by name under Allow access for)".into(),
     })
 }
 

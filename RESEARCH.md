@@ -193,3 +193,7 @@ Sources: HPE Community threads (DL360p Gen8 keystrokes repeated: community.hpe.c
 - The picture is only a **342x256 thumbnail** of the host screen (a 720x400 text screen is scaled to about 0.47; a character is about 4x6 px). Tesseract on a 4x bicubic enlargement gave garbage (`ee te UVTTP91. TRS] ite tdc-2: serdegene MI Ballot.` for `... i2c i2c-2: sendbytes: NAK bailout.`), so a screenshot-and-OCR CLI console is not usable. No other size was found (only `scapture0.png` was tried; no query parameter is known).
 - So a CLI text view of an iDRAC's graphical console needs the real framebuffer: the iDRAC8's VNC (`--console vnc`, already works), or Dell's KVM protocol (the TODO "our own client for Dell's KVM protocol"), which is the only way for an iDRAC9 firmware >= 6.00.02.00 (no VNC).
 
+
+## ARD login refused with "All users" (2026-10-21, 192.168.11.132, macOS "Golden Gate")
+
+Security types offered: 30, 33, 36, 35 (RFB 3.889). The type 30 exchange completed and the Mac answered "Authentication or authorization failure" although Screen Sharing was set to "All users". Adding the user by name under Sharing > Screen Sharing > Allow access for fixed it (user-confirmed). Not a bobcat bug; the error message now says so.
