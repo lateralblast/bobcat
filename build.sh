@@ -237,8 +237,18 @@ build_target() {
 
   if [ "$cli" = 1 ]; then
     echo "== building bobcat-cli =="
-    (cd "$root" && cargo build --release --features vendored ${triple_args[@]+"${triple_args[@]}"})
-    bin=$(find "$root/target" -path '*/release/bobcat-cli*' -type f ! -name '*.d' -perm -u+x -newer "$root/Cargo.toml" | head -1)
+    if [ "${triple_args[1]:-}" = universal-apple-darwin ]; then
+      # plain cargo has no universal target: build both architectures and join them with lipo
+      (cd "$root" && cargo build --release --features vendored --target aarch64-apple-darwin &&
+        cargo build --release --features vendored --target x86_64-apple-darwin)
+      mkdir -p "$root/target/universal-apple-darwin/release"
+      lipo -create -output "$root/target/universal-apple-darwin/release/bobcat-cli" \
+        "$root/target/aarch64-apple-darwin/release/bobcat-cli" "$root/target/x86_64-apple-darwin/release/bobcat-cli"
+      bin="$root/target/universal-apple-darwin/release/bobcat-cli"
+    else
+      (cd "$root" && cargo build --release --features vendored ${triple_args[@]+"${triple_args[@]}"})
+      bin=$(find "$root/target" -path '*/release/bobcat-cli*' -type f ! -name '*.d' -perm -u+x -newer "$root/Cargo.toml" | head -1)
+    fi
     if [ -n "$bin" ]; then
       # an arm64 Docker build is named apart from the x64 one (x64 keeps the plain name)
       suffix=""; [ "${BOBCAT_LINUX_ARCH:-}" != arm64 ] || suffix="-arm64"

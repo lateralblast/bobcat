@@ -6,6 +6,7 @@ All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0
 ### Added
 - GUI: **Stretch to window** in the size menu for the canvas protocols (VNC, AMT, ARD; RDP keeps Fit window because it resizes the Windows desktop). It fills the whole picture area and ignores the aspect ratio (Fit window keeps it); the mouse follows the stretched picture. It was already there for the iLO Java console.
 - `./build.sh --target windows` on Linux starts the Windows VM when it is not running and stops it after the build (`vm.py build --manage`; only a VM this build started is stopped, also after a failure or Ctrl+C). The build tools must already be installed (`vm.py up` once). Untested.
+- `build.sh --target mac --arch universal`: the CLI is now built for both architectures and joined with `lipo` (plain `cargo` rejected `universal-apple-darwin` after the GUI `.dmg` had already been built).
 - Windows VM build: the linker's LNK4099 warnings about the vendored OpenSSL's missing `.pdb` (hundreds of lines, harmless) are silenced with `RUSTFLAGS=-A linker-messages` in `windows/oem/build.cmd`. This changes the compiler flags, so the next VM build recompiles everything once.
 
 ## [2.0.8] - 2026-10-21
