@@ -825,7 +825,9 @@ fn apply_embedded_layout(_app: &AppHandle) {}
 /// would not be in place for the first navigation. Never call it from the main thread.
 fn wait_for_main_thread(webview: &tauri::Webview) {
     let (tx, rx) = std::sync::mpsc::channel();
-    if webview.with_webview(move |_| drop(tx.send(()))).is_ok() {
+    if webview.with_webview(move |_| {
+        let _ = tx.send(());
+    }).is_ok() {
         let _ = rx.recv_timeout(Duration::from_secs(5));
     }
 }

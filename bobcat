@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Wrapper that runs bobcat-cli or the bobcat GUI from a checkout.
+#
+#   ./bobcat [--cli] [args...]   run bobcat-cli with args (default)
+#   ./bobcat --gui [args...]     run the bobcat GUI with args
+#
+# The flag must come first. Everything after it is passed unchanged to the
+# program. The program is built first if its build is stale (cargo does the
+# check; it is a no-op when nothing changed). Frontend files under gui/ui are
+# embedded at compile time, so when they are newer than the GUI binary the
+# wrapper touches gui/src-tauri/src/main.rs to force a rebuild.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$ROOT"
+GUI_DIR="$ROOT/gui/src-tauri"
+CLI_BIN="$CLI_DIR/target/debug/bobcat-cli"
+GUI_BIN="$GUI_DIR/target/debug/bobcat"
+
+mode="cli"
+case "${1:-}" in
+    --cli)
+        mode="cli"
+        shift
+        ;;
+    --gui)
+        mode="gui"
+        shift
+        ;;
+esac
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "bobcat: cargo not found; install Rust (rustup) first" >&2
+    exit 1
+fi
+
+if [ "$mode" = "gui" ]; then
+    # Frontend edits are compiled in, so cargo cannot see them. Force a rebuild.
+    if [ -f "$GUI_BIN" ] && [ -n "$(find "$ROOT/gui/ui" -newer "$GUI_BIN" -print -quit)" ]; then
+        touch "$GUI_DIR/src/main.rs"
+    fi
+    (cd "$GUI_DIR" && cargo build >&2)
+    exec "$GUI_BIN" "$@"
+else
+    (cd "$CLI_DIR" && cargo build >&2)
+    exec "$CLI_BIN" "$@"
+fi

@@ -17,6 +17,7 @@
   #statusbar { flex: none; box-sizing: border-box; height: 28px; padding: 0 10px; display: flex; align-items: center;
                background: #2a2a38; border-top: 1px solid #444; position: relative; z-index: 5; }
   #status { opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  #version { margin-left: auto; flex: none; padding-left: 12px; opacity: .6; white-space: nowrap; }
   #wrap { box-sizing: border-box; flex: 1; background: #000; min-height: 0; overflow: auto; }
   #sel { position: fixed; border: 1px dashed #6cf; background: rgba(100,200,255,.15); pointer-events: none; display: none; }
   #osk { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); width: max-content;
@@ -139,7 +140,7 @@
 <div id="html5note" class="hidden"><p>The iDRAC HTML5 console appears here when you connect.</p><p>Disconnect (or closing the app) logs the session out of the iDRAC.</p></div>
 <div id="javanote" class="hidden"><p>The iDRAC Java console is a window of its own (the iDRAC must use the Java plugin: <code>bobcat-cli --enable java</code>). On macOS bobcat docks it here, over this area; that needs the Accessibility permission.</p><p>Close its window, or Disconnect, to end the session.</p></div>
 <div id="wrap"><canvas id="cv" width="640" height="480" tabindex="0"></canvas></div>
-<div id="statusbar"><span id="status" title="Connection status">idle</span></div>
+<div id="statusbar"><span id="status" title="Connection status">idle</span><span id="version"></span></div>
 <div id="sel"></div>
 <div id="cert"><div class="box"><pre id="certtext"></pre>
   <button id="certtrust" style="display:none">Trust this certificate</button>

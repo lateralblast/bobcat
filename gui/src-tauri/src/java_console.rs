@@ -32,6 +32,7 @@ fn config_dir() -> PathBuf {
 }
 
 /// Where the downloaded Java runtime lives (macOS only).
+#[cfg(target_os = "macos")]
 fn runtime_dir() -> PathBuf {
     config_dir().join("java")
 }
@@ -64,6 +65,7 @@ fn find_java() -> Option<PathBuf> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn curl(args: &[&str]) -> Result<Vec<u8>, String> {
     let out = Command::new("curl").args(["-fsS", "--max-time", "900"]).args(args).output().map_err(|e| format!("could not run curl: {e}"))?;
     if !out.status.success() {
@@ -248,7 +250,7 @@ fn trust_in_viewer(ip: &str, store: &Path) -> Result<(), String> {
     let mut issuer = String::new();
     for e in cert.issuer_name().entries() {
         let name = e.object().nid().short_name().map_err(|e| e.to_string())?;
-        let value = e.data().as_utf8().map_err(|e| e.to_string())?;
+        let value = e.data().to_string().map_err(|e| e.to_string())?;
         issuer.push_str(&format!("/{name}={value}"));
     }
     let digest = hash(MessageDigest::sha256(), issuer.as_bytes()).map_err(|e| e.to_string())?;

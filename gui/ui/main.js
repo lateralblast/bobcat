@@ -46,6 +46,7 @@ const $ = (id) => document.getElementById(id);
 const isCanvas = (p) => p === 'vnc' || p === 'amt' || p === 'ard' || p === 'rdp';
 
 invoke('default_tls').then((t) => { $('tls').checked = t; });
+invoke('app_version').then((v) => { $('version').textContent = 'v' + v; }).catch(() => {});
 invoke('default_user').then((u) => { $('user').value = u; });
 invoke('default_ip').then((ip) => { if (ip) $('ip').value = ip; });
 // The password saved in the keychain for this IP: the iDRAC login (user + IP) for SSH, SOL

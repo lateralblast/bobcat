@@ -31,6 +31,7 @@ static OURS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static RUNNING: Mutex<Vec<(String, u16)>> = Mutex::new(Vec::new());
 
 /// Is this one of our own relay certificates? (the web view's certificate check asks)
+#[cfg(target_os = "macos")]
 pub(crate) fn is_ours(fingerprint: Option<&String>) -> bool {
     fingerprint.is_some_and(|f| OURS.lock().unwrap().contains(f))
 }
