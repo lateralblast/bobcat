@@ -2,6 +2,13 @@
 
 All notable changes are tracked here. Versioning: no digit exceeds 9 (0.0.9 -> 0.1.0).
 
+## [2.1.0] - 2026-11-17
+### Added
+- `./bobcat` wrapper script in the repository root: runs `bobcat-cli` (default or `--cli`) or the GUI (`--gui`) with the remaining arguments, building the program first when its build is stale (`cargo build`; for the GUI it also touches `gui/src-tauri/src/main.rs` when files in `gui/ui/` are newer than the binary, because the frontend is embedded at compile time).
+- GUI: the app version is shown at the right of the status bar, on the same line as the status text (`app_version` command, from `Cargo.toml`).
+### Fixed
+- Compiler warnings in the GUI crate: the deprecated `Asn1StringRef::as_utf8` (now `to_string`, which does not truncate at an interior NUL), a no-op `drop` of a `Result` in `html5.rs`, and `runtime_dir`, `curl` and `is_ours` (macOS-only code) are now gated with `#[cfg(target_os = "macos")]`.
+
 ## [2.0.9] - 2026-10-21
 ### Added
 - GUI: **Stretch to window** in the size menu for the canvas protocols (VNC, AMT, ARD; RDP keeps Fit window because it resizes the Windows desktop). It fills the whole picture area and ignores the aspect ratio (Fit window keeps it); the mouse follows the stretched picture. It was already there for the iLO Java console.

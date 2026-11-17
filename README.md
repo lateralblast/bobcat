@@ -2,7 +2,7 @@
 
 # Bobcat
 
-Version: 2.0.9
+Version: 2.1.0
 
 **B**MC **O**ut-of-band **B**rowser, **C**onsole **A**ccess **T**ool: a command line tool and a desktop app for
 reaching the consoles of remote machines: Dell iDRAC, HP iLO 4 and Intel AMT (vPro) management controllers, and also a
